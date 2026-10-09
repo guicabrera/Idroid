@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Idroid" parent="android:Theme.Material.Light.NoActionBar" />
+
+    <!-- Used by ShareReceiverActivity so it renders as a small dialog over
+         whatever app the user shared from, instead of a full-screen activity. -->
+    <style name="Theme.Idroid.Dialog" parent="android:Theme.Material.Light.Dialog" />
+</resources>

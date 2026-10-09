@@ -16,7 +16,7 @@ status: active
 
 | Document | Description |
 |-----------|-------------|
-| _To be added_ | Add project proposal, vision, scope, or stakeholder documentation here. |
+| [Project Vision](./project-vision.md) | Problem, goals, non-goals, intended users, and feature priority. |
 
 ## Related
 

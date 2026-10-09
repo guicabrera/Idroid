@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Deliberately minimal: no event types, no window content, no feedback —
+    this service exists only for the clipboard-read exemption it grants the
+    process (see ClipboardAccessibilityService.kt), not to observe the UI.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeAllMask"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:canRetrieveWindowContent="false"
+    android:notificationTimeout="100"
+    android:description="@string/accessibility_service_description" />

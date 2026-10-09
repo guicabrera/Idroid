@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Idroid</string>
+    <string name="notification_channel_sync_name">Idroid sync</string>
+    <string name="notification_channel_sync_description">Keeps the connection to your Mac relay open</string>
+    <string name="notification_sync_active_title">Idroid is syncing</string>
+    <string name="notification_sync_active_text">Connected to your relay</string>
+    <string name="notification_channel_incoming_name">Incoming items</string>
+    <string name="notification_channel_incoming_description">New files and text shared from your Mac</string>
+    <string name="accessibility_service_description">Idroid uses this to read clipboard content so it can sync it automatically with your paired device. It does not read anything else, and nothing is sent anywhere except to the device you paired with.</string>
+</resources>

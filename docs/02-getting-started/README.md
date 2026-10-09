@@ -16,7 +16,9 @@ status: active
 
 | Document | Description |
 |-----------|-------------|
-| _To be added_ | Add environment setup, onboarding, and access instructions here. |
+| [Relay service README](../../relay/README.md) | Build, configure, and install the Mac mini relay (`idroid-relay`) as a launchd agent. |
+| [Android app README](../../android/README.md) | Build the Android client, and the manual pairing walkthrough. |
+| [macOS app README](../../macos/README.md) | Build and run the macOS client (Swift Package), and the manual pairing walkthrough. |
 
 ## Related
 

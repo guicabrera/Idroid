@@ -16,7 +16,8 @@ status: active
 
 | Document | Description |
 |-----------|-------------|
-| _To be added_ | Add the architecture overview, diagrams, data models, and architecture decision records here. |
+| [ADR-0001: Transport and relay architecture](./ADR-0001-transport-and-relay-architecture.md) | Tailscale tailnet + Mac mini relay for Android↔macOS sharing; native apps per platform. |
+| [ADR-0002: Automatic clipboard sync](./ADR-0002-automatic-clipboard-sync.md) | Accessibility Service on Android for background clipboard capture; automatic, no-confirmation bidirectional sync. |
 
 Use the [ADR template](../10-resources/templates/adr-template.md) for decisions. Keep ADRs in this folder while there are fewer than three; create an `adrs/` subfolder when the collection grows.
 
