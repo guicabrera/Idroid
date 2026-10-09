@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.idroid.relay</string>
+
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/local/bin/idroid-relay</string>
+	</array>
+
+	<!-- Replace this placeholder before loading the job: generate a real
+	     secret (e.g. `openssl rand -hex 32`) and never commit the real
+	     value to version control. -->
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>IDROID_ADMIN_SECRET</key>
+		<string>REPLACE_WITH_A_GENERATED_SECRET</string>
+		<key>IDROID_LISTEN_ADDR</key>
+		<string>0.0.0.0:8443</string>
+		<key>IDROID_RETENTION_DAYS</key>
+		<string>7</string>
+	</dict>
+
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+
+	<key>StandardOutPath</key>
+	<string>/tmp/idroid-relay.log</string>
+	<key>StandardErrorPath</key>
+	<string>/tmp/idroid-relay.err.log</string>
+</dict>
+</plist>

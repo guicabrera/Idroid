@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Idroid mark: two opposite arrows (send / receive between devices),
+     kept inside the adaptive icon's 66dp safe zone. Also used as the
+     monochrome (themed) icon. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M35,44 H71 M61,34 L71,44 L61,54"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="7"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:pathData="M73,64 H37 M47,54 L37,64 L47,74"
+        android:strokeColor="#CCFFFFFF"
+        android:strokeWidth="7"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+</vector>

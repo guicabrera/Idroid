@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Matches the Compose palette's background (Theme.kt), so there's no
+         white flash before the first frame. -->
+    <color name="idroid_window_background">#FFF7F8FC</color>
+</resources>

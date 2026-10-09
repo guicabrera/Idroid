@@ -1,0 +1,27 @@
+# Run the relay locally:  podman compose up -d --build
+# Requires IDROID_ADMIN_SECRET in relay/.env (copy .env.example).
+services:
+  relay:
+    build:
+      context: .
+      dockerfile: Containerfile
+    image: localhost/idroid-relay:dev
+    container_name: idroid-relay
+    environment:
+      IDROID_ADMIN_SECRET: ${IDROID_ADMIN_SECRET:?set IDROID_ADMIN_SECRET in .env}
+      IDROID_RETENTION_DAYS: ${IDROID_RETENTION_DAYS:-7}
+    ports:
+      # Defaults to localhost; set IDROID_BIND_ADDR to this machine's tailnet
+      # IP (`tailscale ip -4`) in .env so the phone can reach it.
+      - "${IDROID_BIND_ADDR:-127.0.0.1}:8443:8443"
+    volumes:
+      - relay-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8443/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  relay-data:

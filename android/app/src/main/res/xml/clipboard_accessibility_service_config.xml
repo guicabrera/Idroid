@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Only the event types needed to notice a copy action (a tapped "Copy"
+    button, a "Copied" toast, the system clipboard overlay); no window
+    content access. See ClipboardAccessibilityService.kt.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeViewClicked|typeNotificationStateChanged|typeWindowStateChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:canRetrieveWindowContent="false"
+    android:notificationTimeout="100"
+    android:description="@string/accessibility_service_description" />

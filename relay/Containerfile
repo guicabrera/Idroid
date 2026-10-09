@@ -1,0 +1,22 @@
+# Local/dev image for the relay. In production the relay runs as a launchd
+# agent on the Mac mini (see README); this is for running it on any machine
+# with podman/docker to develop and test the client apps against.
+
+FROM docker.io/library/golang:1.26-alpine AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/idroid-relay ./cmd/idroid-relay
+
+FROM docker.io/library/alpine:3.22
+RUN apk add --no-cache ca-certificates wget \
+    && adduser -D -u 10001 relay \
+    && mkdir -p /data && chown relay /data
+COPY --from=build /out/idroid-relay /usr/local/bin/idroid-relay
+USER relay
+ENV IDROID_LISTEN_ADDR=:8443 \
+    IDROID_DATA_DIR=/data
+VOLUME /data
+EXPOSE 8443
+ENTRYPOINT ["/usr/local/bin/idroid-relay"]
