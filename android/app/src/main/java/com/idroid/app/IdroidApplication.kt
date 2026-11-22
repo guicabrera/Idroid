@@ -3,10 +3,13 @@ package com.idroid.app
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import com.idroid.app.data.ClipboardSettings
 import com.idroid.app.data.ClipboardSyncState
+import com.idroid.app.data.FileShareResponder
 import com.idroid.app.data.PairingRepository
 import com.idroid.app.data.RelayApiClient
 import com.idroid.app.data.SaveLocationRepository
+import com.idroid.app.data.SharedFoldersRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -18,7 +21,10 @@ class IdroidApplication : Application() {
     val pairingRepository: PairingRepository by lazy { PairingRepository(this) }
     val relayApiClient: RelayApiClient by lazy { RelayApiClient() }
     val saveLocationRepository: SaveLocationRepository by lazy { SaveLocationRepository(this) }
+    val clipboardSettings: ClipboardSettings by lazy { ClipboardSettings(this) }
     val clipboardSyncState = ClipboardSyncState()
+    val sharedFoldersRepository: SharedFoldersRepository by lazy { SharedFoldersRepository(this) }
+    val fileShareResponder: FileShareResponder by lazy { FileShareResponder(this, sharedFoldersRepository, relayApiClient) }
 
     /** Process-wide scope for fire-and-forget uploads that must outlive a short-lived activity. */
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)

@@ -9,6 +9,8 @@ final class RelaySyncController {
 
     var onNewItem: (() -> Void)?
     var onDevicesChanged: (() -> Void)?
+    /// Another device is browsing this Mac's shared folders (ADR-0004).
+    var onFSRequest: ((NotifyEvent) -> Void)?
     /// Called on the main queue whenever the connection goes up or down.
     var onConnectionChange: ((Bool) -> Void)?
 
@@ -82,6 +84,7 @@ final class RelaySyncController {
             switch event.event {
             case "new_item": self.onNewItem?()
             case "devices_changed": self.onDevicesChanged?()
+            case "fs_request": self.onFSRequest?(event)
             default: break
             }
         }

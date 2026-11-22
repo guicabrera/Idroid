@@ -10,10 +10,15 @@ import (
 // NotifyEvent is pushed over a device's websocket connection so a connected
 // client doesn't have to poll: "new_item" when something lands in its inbox
 // (GET /inbox), "devices_changed" when a device joins or leaves its group
-// (GET /devices).
+// (GET /devices), and "fs_request" when another device browses its shared
+// folders (answered with POST /fs/respond/{request_id}, see fsproxy.go).
 type NotifyEvent struct {
-	Event  string `json:"event"`
-	ItemID string `json:"item_id"`
+	Event     string `json:"event"`
+	ItemID    string `json:"item_id"`
+	RequestID string `json:"request_id,omitempty"`
+	Op        string `json:"op,omitempty"`
+	Path      string `json:"path,omitempty"`
+	SenderID  string `json:"sender_id,omitempty"`
 }
 
 // hub tracks live websocket connections per device ID. A device may have

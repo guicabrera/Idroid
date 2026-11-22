@@ -21,12 +21,38 @@ data class ItemMeta(
     val expires_at: String,
 )
 
-/** Pushed over the websocket: "new_item" (refetch GET /inbox) or "devices_changed" (refetch GET /devices). */
+/**
+ * Pushed over the websocket: "new_item" (refetch GET /inbox), "devices_changed"
+ * (refetch GET /devices), or "fs_request" (another device is browsing this
+ * phone's shared folders; answered with POST /fs/respond/{request_id}, ADR-0004).
+ */
 @Serializable
 data class NotifyEvent(
     val event: String,
     val item_id: String = "",
+    val request_id: String = "",
+    val op: String = "",
+    val path: String = "/",
+    val sender_id: String = "",
 )
+
+/**
+ * One entry of a remote folder listing (GET /fs/{device}/list), the same JSON
+ * both apps produce when answering an fs_request. [path] is absolute within the
+ * serving device's shares: "/" lists the shared folders themselves.
+ */
+@Serializable
+data class FsEntry(
+    val name: String,
+    val path: String,
+    val is_dir: Boolean,
+    val size: Long = 0,
+    val modified: String? = null,
+    val mime: String? = null,
+)
+
+@Serializable
+data class FsListing(val entries: List<FsEntry>)
 
 /** One device in this phone's group (GET /devices) — everything it can send to. */
 @Serializable

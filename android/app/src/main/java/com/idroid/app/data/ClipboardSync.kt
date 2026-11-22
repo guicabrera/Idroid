@@ -29,6 +29,24 @@ class ClipboardSyncState {
     var lastSentHash: String? = null
 }
 
+/**
+ * Whether copies the OS flags as sensitive (OTP codes, passwords) are
+ * synced too. Off by default (ADR-0002); kept next to the other plain
+ * settings in [SaveLocationRepository]'s prefs file.
+ */
+class ClipboardSettings(context: Context) {
+
+    private val prefs = context.getSharedPreferences("idroid_settings", Context.MODE_PRIVATE)
+
+    var syncSensitive: Boolean
+        get() = prefs.getBoolean(KEY_SYNC_SENSITIVE, false)
+        set(value) = prefs.edit().putBoolean(KEY_SYNC_SENSITIVE, value).apply()
+
+    private companion object {
+        const val KEY_SYNC_SENSITIVE = "clipboard_sync_sensitive"
+    }
+}
+
 /** Clipboard pushes are held in memory on both ends; anything bigger belongs in a regular file send. */
 const val MAX_CLIPBOARD_BYTES = 20 shl 20
 
@@ -41,7 +59,8 @@ fun sha256(text: String): String = sha256(text.toByteArray(Charsets.UTF_8))
 
 /**
  * Reads the current clipboard and uploads it to every paired device if it's
- * new, non-sensitive text or an image. Only succeeds when called while this
+ * new text or an image (copies flagged sensitive only with
+ * [ClipboardSettings.syncSensitive]). Only succeeds when called while this
  * app has window focus (Android 10+ returns null otherwise, even for
  * accessibility services) — see ClipboardReadActivity.
  */
@@ -52,9 +71,13 @@ fun pushClipboardIfChanged(context: Context) {
     if (clip.itemCount == 0) return
 
     val description = clip.description
-    // Free, OS-provided signal (password managers / OTP autofill set
-    // this) — never synced, confirmation prompt or not. See ADR-0002.
-    if (description.extras?.getBoolean(ClipDescription.EXTRA_IS_SENSITIVE) == true) return
+    // Free, OS-provided signal (password managers / authenticator apps set
+    // this) — skipped unless the user opted in. See ADR-0002.
+    if (description.extras?.getBoolean(ClipDescription.EXTRA_IS_SENSITIVE) == true &&
+        !app.clipboardSettings.syncSensitive
+    ) {
+        return
+    }
 
     val item = clip.getItemAt(0)
     val imageUri = item.uri?.takeIf { description.hasMimeType("image/*") }

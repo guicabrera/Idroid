@@ -8,6 +8,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import okhttp3.Call
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
@@ -177,6 +178,45 @@ class RelayApiClient {
         return json.decodeFromString(body)
     }
 
+    // --- Live file browsing (ADR-0004) ---
+
+    /** Lists a folder shared by another device; "/" lists its shared folders. */
+    suspend fun listRemote(config: PairingConfig, deviceId: String, path: String): List<FsEntry> {
+        val request = fsRequest(config, deviceId, "list", path).get().build()
+        val body = execute(request).use { it.bodyStringOrThrow() }
+        return json.decodeFromString<FsListing>(body).entries
+    }
+
+    /** Streams a file from another device's shared folder straight to [output]. */
+    suspend fun downloadRemoteTo(config: PairingConfig, deviceId: String, path: String, output: OutputStream) =
+        withContext(Dispatchers.IO) {
+            val request = fsRequest(config, deviceId, "content", path).get().build()
+            execute(request).use { response ->
+                if (!response.isSuccessful) throw RelayException("download failed", response.code)
+                val responseBody = response.body ?: throw RelayException("empty response body")
+                responseBody.byteStream().use { it.copyTo(output) }
+            }
+        }
+
+    /** Answers an fs_request; [body] carries its own Content-Type and length. */
+    suspend fun respondFs(config: PairingConfig, requestId: String, status: Int, body: RequestBody) {
+        val request = authedRequest(config, "/fs/respond/$requestId")
+            .header("X-Idroid-Status", status.toString())
+            .post(body)
+            .build()
+        execute(request).use { response ->
+            if (!response.isSuccessful) throw RelayException("respond failed", response.code)
+        }
+    }
+
+    private fun fsRequest(config: PairingConfig, deviceId: String, op: String, path: String): Request.Builder {
+        val url = (config.relayBaseUrl.trimEnd('/') + "/fs/$deviceId/$op").toHttpUrl()
+            .newBuilder()
+            .addQueryParameter("path", path)
+            .build()
+        return Request.Builder().url(url).header("Authorization", "Bearer ${config.deviceToken}")
+    }
+
     fun openWebSocket(config: PairingConfig, listener: WebSocketListener): WebSocket {
         val wsUrl = toWebSocketUrl(config.relayBaseUrl) + "/ws?token=" + config.deviceToken
         val request = Request.Builder().url(wsUrl).build()
@@ -230,7 +270,7 @@ class RelayApiClient {
  * instead of buffering the whole file in memory — important since shared
  * files can be large photos/videos.
  */
-private class ContentUriRequestBody(
+internal class ContentUriRequestBody(
     private val context: Context,
     private val uri: Uri,
     private val mediaType: MediaType?,

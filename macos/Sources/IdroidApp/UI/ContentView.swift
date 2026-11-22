@@ -35,6 +35,7 @@ struct MainView: View {
                 switch appState.section {
                 case .inbox: InboxView()
                 case .send: SendView()
+                case .files: FilesView()
                 case .devices: DevicesView()
                 }
             }
@@ -57,6 +58,8 @@ private struct Sidebar: View {
                     .tag(AppSection.inbox)
                 Label("Send", systemImage: "paperplane")
                     .tag(AppSection.send)
+                Label("Files", systemImage: "folder")
+                    .tag(AppSection.files)
                 Label("Devices", systemImage: "laptopcomputer.and.iphone")
                     .badge(appState.devices.count)
                     .tag(AppSection.devices)

@@ -4,9 +4,9 @@ tags:
   - architecture
   - adr
 created: 2026-11-21
-modified: 2026-11-21
-decision_date:
-status: proposed
+modified: 2026-11-22
+decision_date: 2026-11-22
+status: accepted
 deciders: [Guilherme Cabrera]
 supersedes:
 superseded_by:
@@ -14,7 +14,7 @@ superseded_by:
 
 # ADR-0004: Live file access between Android and macOS
 
-> **Summary:** Idroid adds live, browse-on-demand file access as a direct device-to-device connection over the tailnet: first Mac folders exposed to Android through a `DocumentsProvider`, later Android folders exposed to the Mac; the relay inbox stays for push-style sends only.
+> **Summary:** Idroid adds live, browse-on-demand file access in both directions (Mac folders on Android, Android folders on the Mac). Requests are tunneled through the relay over each app's existing websocket and streamed straight through without being stored; neither app accepts inbound connections. A direct tailnet path and an Android `DocumentsProvider` remain possible later steps.
 
 ## Context and problem
 
@@ -60,43 +60,41 @@ Each app can run a small authenticated HTTP file service bound to its tailnet in
 - **Android → Mac:** the Android app serves SAF-granted folders from a foreground service started on demand. The Mac first gets a browser inside the Idroid app; a Finder-visible mount (WebDAV mount or File Provider extension) is a later step.
 
 - **Benefits:** No extra hop; native integration on Android; scope limited to granted folders; reuses pairing tokens; direction 1 is useful on its own.
-- **Drawbacks:** New server code in both apps; Android serving requires a visible foreground service; Finder integration is expensive (see consequences).
+- **Drawbacks:** New server code in both apps; each app must accept inbound connections and learn the other's tailnet address; Android serving requires a visible foreground service; Finder integration is expensive (see consequences).
+
+### Option 4: Tunnel live requests through the relay websocket, stream without storing (chosen)
+
+Both apps already keep a websocket open to the relay (`RelaySyncService` on Android, `RelaySyncController` on macOS). The caller asks the relay for a listing or a file; the relay pushes an `fs_request` to the target over that websocket; the target answers with an HTTP POST whose body the relay copies straight into the caller's response.
+
+- **Benefits:** No server, port, or address discovery in either app; works whenever both devices can reach the relay, which they already must; group membership on the relay is the authorization, the same as for sends; nothing is written to the Mac mini's disk, which removes Option 2's main drawback.
+- **Drawbacks:** Bytes still take the extra hop through the Mac mini, so a large file between two devices away from home crosses the home uplink twice; the target must be online (same as Option 3).
 
 ## Decision
 
-**Chosen option: Option 3 — direct peer file service over the tailnet**, delivered in two phases:
+**Chosen option: Option 4 — tunnel through the relay websocket, stream without storing**, in both directions at once, with an in-app browser on each platform.
 
-1. **Phase 1: Mac folders on Android** via a Mac-side file service plus an Android `DocumentsProvider`.
-2. **Phase 2: Android folders on the Mac**, starting with an in-app browser on macOS; Finder integration only if phase 2 proves useful day to day.
-
-Option 1 remains the documented workaround until phase 1 ships. Option 2 is rejected because relaying adds cost without removing the online-peer requirement.
+Option 4 delivers both directions with a fraction of Option 3's code, because the always-on connection it needs already exists in both apps. Option 2 is rejected as written (it stores or mirrors files on the Mac mini); Option 4 keeps its single-endpoint simplicity without that cost. Option 3 stays the upgrade path if the extra hop becomes a problem for large transfers: the `fs_request` protocol and the listing JSON would be reused unchanged, only the transport would change.
 
 ## Consequences
 
-- **Positive:** Mac files become available to every Android app through the system picker, which is the most native outcome available.
-- **Positive:** Exposure is limited to explicitly shared folders, per paired device, read-only unless write is enabled.
-- **Positive:** The relay stays small; it gains presence/discovery, not file traffic.
-- **Trade-off or risk:** Idroid now has two transfer models: async push (relay inbox) and live pull (direct). UI must make clear when a device is offline and browsing is unavailable.
-- **Trade-off or risk:** Direct connections mean each app accepts inbound connections on the tailnet; auth must be enforced by the app, not assumed from tailnet membership (same principle as ADR-0001).
-- **Trade-off or risk:** Android serving needs a foreground service with a persistent notification and SAF tree grants; folders outside granted trees are unreachable unless `MANAGE_EXTERNAL_STORAGE` is requested, which this ADR does not adopt.
+- **Positive:** Both directions ship together, with no new listener in either app.
+- **Positive:** Exposure is limited to explicitly shared folders, read-only.
+- **Positive:** Nothing browsed is persisted on the relay.
+- **Trade-off or risk:** Idroid now has two transfer models: async push (relay inbox) and live pull (tunneled). The UI shows when a device is offline and browsing is unavailable.
+- **Trade-off or risk:** Every byte passes through the Mac mini; throughput is bounded by its links. Acceptable for documents and photos; revisit with Option 3 if video-sized transfers become common.
+- **Trade-off or risk:** Any device in the group can browse every shared folder; there are no per-device grants yet.
+- **Trade-off or risk:** On Android, only SAF trees the user granted are reachable; `MANAGE_EXTERNAL_STORAGE` is not requested. Serving rides on the existing `RelaySyncService` foreground service, so no extra notification is needed.
+- **Trade-off or risk:** Mac files are only visible inside the Idroid app on Android, not yet in the system file picker (`DocumentsProvider`).
 - **Trade-off or risk:** A Finder-native view of the phone requires either mounting WebDAV (`⌘K`, works, but stalls Finder when the phone drops off) or a File Provider extension (needs an app extension target and proper code signing, which the current SwiftPM + ad-hoc `codesign` build in `macos/scripts/bundle.sh` does not support). Deferred.
 
 ## Implementation notes
 
-- **Presence and discovery:** each device reports its file service endpoint (tailnet hostname + port) to the relay when it opens `/ws`; `GET /devices` returns it along with online status. No file data goes to the relay.
-- **Auth:** requests carry the caller's device token; the serving device validates it against its local list of paired peers (obtained at pairing / from `GET /devices`), not by calling the relay on every request. Rotate/revoke follows device removal (`DELETE /devices/{id}`).
-- **Binding:** listen only on the Tailscale interface (100.64.0.0/10 / `fd7a:115c:a1e0::/48`), never `0.0.0.0`.
-- **API sketch (both platforms):**
-  - `GET /fs/roots` — shared roots with display name and `writable` flag.
-  - `GET /fs/list?root=<id>&path=<rel>` — entries (name, size, mtime, mime, is_dir).
-  - `GET /fs/content?root=<id>&path=<rel>` — file bytes, with `Range` support.
-  - `GET /fs/thumbnail?...` — optional, for the picker.
-  - `PUT /fs/content?...` — only when the root is writable.
-  - Paths are relative to a root; reject `..`, absolute paths, and symlinks that resolve outside the root.
-- **macOS:** shares are folders picked with `NSOpenPanel` and stored as security-scoped bookmarks (the same pattern as `SaveLocationStore`), so the design survives a future move to a sandboxed build.
-- **Android phase 1:** `DocumentsProvider` with one root per online paired Mac; `queryChildDocuments` maps to `/fs/list`, `openDocument` streams `/fs/content` through a pipe or cached file; notify roots changed when presence changes.
-- **Android phase 2:** shared folders are SAF trees from `ACTION_OPEN_DOCUMENT_TREE` (already used by `SaveLocationRepository`); serving runs in a foreground service the user starts from the app or a quick settings tile, with an idle timeout.
-- **Out of scope:** two-way folder sync, conflict resolution, offline caching of remote folders.
+- **Relay** (`relay/internal/relay/fsproxy.go`): `GET /fs/{device_id}/list?path=…` and `GET /fs/{device_id}/content?path=…`, authenticated; the target must be in the caller's group (404 otherwise) and online (503). The relay pushes `{"event":"fs_request","request_id","op","path","sender_id"}` to the target and waits up to 20 s for it to start answering (504). The target answers with `POST /fs/respond/{request_id}` carrying `X-Idroid-Status`, `Content-Type` and the body; only the target device may answer. Nothing is written to disk.
+- **Paths** are virtual: `/` lists the shared folders, `/<share>/sub/file` addresses a file. Each share is named after its folder, suffixed ` 2`, ` 3`… on clashes. Servers reject `.` and `..` segments; macOS resolves symlinks and checks the result is still inside the share.
+- **Listing JSON:** `{"entries":[{"name","path","is_dir","size","modified","mime"}]}`; `modified` is RFC 3339, folders first, hidden files skipped.
+- **macOS:** shared folders are picked in Settings → Sharing (`SharedFoldersStore`, plain paths since the app is not sandboxed); `FileShareResponder` answers requests; the Files section of the main window browses other devices (open, save, save to…).
+- **Android:** shared folders are SAF trees from `ACTION_OPEN_DOCUMENT_TREE` with a persisted read grant (`SharedFoldersRepository`); `FileShareResponder` walks them with `DocumentsContract`; `FileBrowserScreen` browses other devices (tap to open, download button to save).
+- **Out of scope:** writes (upload into a remote folder, rename, delete), folder downloads, thumbnails, `DocumentsProvider` / Finder integration, two-way sync, offline caching.
 
 ## Links
 
@@ -109,3 +107,4 @@ Option 1 remains the documented workaround until phase 1 ships. Option 2 is reje
 | Date | Status | Notes |
 |------|--------|-------|
 | 2026-11-21 | proposed | Initial draft. |
+| 2026-11-22 | accepted | Chose relay tunneling (Option 4) over direct peer servers; both directions implemented with in-app browsers. |

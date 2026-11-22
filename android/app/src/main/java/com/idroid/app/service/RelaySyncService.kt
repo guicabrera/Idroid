@@ -113,6 +113,12 @@ class RelaySyncService : Service() {
 
     private fun handleMessage(text: String) {
         val event = runCatching { json.decodeFromString<NotifyEvent>(text) }.getOrNull() ?: return
+        if (event.event == "fs_request") {
+            // Another device is browsing this phone's shared folders (ADR-0004).
+            val pairing = app.pairingRepository.load() ?: return
+            serviceScope.launch { app.fileShareResponder.handle(pairing, event) }
+            return
+        }
         app.relayEvents.tryEmit(event.event)
         if (event.event != "new_item") return
         serviceScope.launch { processInbox() }

@@ -7,7 +7,7 @@ import UserNotifications
 /// Where the main window is showing; lives here (not in a view) so the menu
 /// bar can jump straight to a section.
 enum AppSection: String, Hashable, CaseIterable {
-    case inbox, send, devices
+    case inbox, send, files, devices
 }
 
 /// Where a send goes: one device, or every device in the group.
@@ -30,9 +30,13 @@ final class AppState: ObservableObject {
     @Published var errorMessage: String?
     @Published var statusMessage: String?
     @Published private(set) var saveLocation: SaveLocation
+    /// Folders on this Mac that paired devices can browse (ADR-0004).
+    @Published private(set) var sharedFolders: [SharedFolder]
 
     @Published var section: AppSection = .inbox
     @Published var isAddDevicePresented = false
+    /// The device shown in the Files section.
+    @Published var browsingDeviceID: String?
 
     @Published var clipboardSyncEnabled: Bool {
         didSet {
@@ -55,6 +59,7 @@ final class AppState: ObservableObject {
     private let defaults = UserDefaults.standard
     private let pairingStore = PairingStore()
     private let saveLocationStore = SaveLocationStore()
+    private let sharedFoldersStore = SharedFoldersStore()
     private let syncController = RelaySyncController()
     private let clipboardSyncController = ClipboardSyncController()
     /// Inbox ids already seen, so only genuinely new arrivals notify.
@@ -69,6 +74,7 @@ final class AppState: ObservableObject {
 
     init() {
         saveLocation = saveLocationStore.load()
+        sharedFolders = sharedFoldersStore.load()
         clipboardSyncEnabled = defaults.object(forKey: Keys.clipboardSync) as? Bool ?? true
         clipboardSyncImages = defaults.object(forKey: Keys.clipboardImages) as? Bool ?? true
         notificationsEnabled = defaults.object(forKey: Keys.notifications) as? Bool ?? true
@@ -77,6 +83,14 @@ final class AppState: ObservableObject {
 
         syncController.onNewItem = { [weak self] in self?.refreshInbox() }
         syncController.onDevicesChanged = { [weak self] in self?.refreshDevices() }
+        syncController.onFSRequest = { [weak self] event in
+            guard let self, let pairing = self.pairing else { return }
+            let folders = self.sharedFolders
+            let apiClient = self.apiClient
+            Task.detached {
+                await FileShareResponder.handle(event, folders: folders, config: pairing, apiClient: apiClient)
+            }
+        }
         syncController.onConnectionChange = { [weak self] connected in
             guard let self, self.isConnected != connected else { return }
             self.isConnected = connected
@@ -317,6 +331,87 @@ final class AppState: ObservableObject {
             let url = dir.appendingPathComponent(name)
             if !FileManager.default.fileExists(atPath: url.path) { return url }
             n += 1
+        }
+    }
+
+    // MARK: - Shared folders and remote browsing (ADR-0004)
+
+    func addSharedFolders() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = true
+        panel.prompt = "Share"
+        panel.message = "Your paired devices will be able to browse and download from these folders."
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK else { return }
+        let paths = sharedFolders.map(\.url.path) + panel.urls.map(\.path).filter { path in
+            !sharedFolders.contains { $0.url.path == path }
+        }
+        setSharedFolders(paths)
+    }
+
+    func removeSharedFolder(_ folder: SharedFolder) {
+        setSharedFolders(sharedFolders.filter { $0 != folder }.map(\.url.path))
+    }
+
+    private func setSharedFolders(_ paths: [String]) {
+        sharedFolders = SharedFoldersStore.named(paths: paths)
+        sharedFoldersStore.save(sharedFolders)
+    }
+
+    func browse(_ device: PeerDevice) {
+        browsingDeviceID = device.id
+        section = .files
+    }
+
+    func listRemote(deviceID: String, path: String) async throws -> [FSEntry] {
+        guard let pairing else { return [] }
+        return try await apiClient.listRemote(pairing, deviceID: deviceID, path: path)
+    }
+
+    /// Downloads a remote file to a temporary folder and opens it with the default app.
+    func openRemote(_ entry: FSEntry, deviceID: String) {
+        guard let pairing else { return }
+        Task {
+            do {
+                let tempURL = try await apiClient.downloadRemote(pairing, deviceID: deviceID, path: entry.path)
+                let dir = FileManager.default.temporaryDirectory.appendingPathComponent("Idroid", isDirectory: true)
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                let destination = dir.appendingPathComponent(entry.name)
+                try? FileManager.default.removeItem(at: destination)
+                try FileManager.default.moveItem(at: tempURL, to: destination)
+                NSWorkspace.shared.open(destination)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    /// Saves remote files to the default save location (asking when that's "Ask each time").
+    func saveRemote(_ entries: [FSEntry], deviceID: String, askForFolder: Bool = false) {
+        guard let pairing, !entries.isEmpty else { return }
+        let folder: URL?
+        if askForFolder || saveLocation.resolvedFolder == nil {
+            NSApp.activate(ignoringOtherApps: true)
+            folder = FolderPicker.pick(prompt: "Save Here", startingAt: saveLocation.resolvedFolder ?? SaveLocation.downloadsURL)
+        } else {
+            folder = saveLocation.resolvedFolder
+        }
+        guard let folder else { return }
+        Task {
+            do {
+                for entry in entries {
+                    let tempURL = try await apiClient.downloadRemote(pairing, deviceID: deviceID, path: entry.path)
+                    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                    let destination = Self.uniqueDestination(for: entry.name, in: folder)
+                    try FileManager.default.moveItem(at: tempURL, to: destination)
+                }
+                let what = entries.count == 1 ? entries[0].name : "\(entries.count) files"
+                showStatus("Saved \(what) to \(folder.lastPathComponent)")
+            } catch {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 

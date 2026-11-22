@@ -29,16 +29,49 @@ struct ItemMeta: Codable, Identifiable, Equatable {
     }
 }
 
-/// Pushed over the websocket: "new_item" (refetch GET /inbox) or
-/// "devices_changed" (refetch GET /devices).
+/// Pushed over the websocket: "new_item" (refetch GET /inbox),
+/// "devices_changed" (refetch GET /devices), or "fs_request" (another
+/// device is browsing this Mac's shared folders; answer with
+/// POST /fs/respond/{request_id}, see ADR-0004).
 struct NotifyEvent: Codable {
     let event: String
     let itemID: String?
+    let requestID: String?
+    let op: String?
+    let path: String?
+    let senderID: String?
 
     enum CodingKeys: String, CodingKey {
         case event
         case itemID = "item_id"
+        case requestID = "request_id"
+        case op, path
+        case senderID = "sender_id"
     }
+}
+
+/// One entry of a remote folder listing (GET /fs/{device}/list), the same
+/// JSON both apps produce when answering an fs_request. `path` is absolute
+/// within the serving device's shares: "/" lists the shared folders
+/// themselves, "/Documents/a.pdf" is a file inside the share "Documents".
+struct FSEntry: Codable, Identifiable, Hashable {
+    let name: String
+    let path: String
+    let isDir: Bool
+    let size: Int64
+    let modified: String?
+    let mime: String?
+
+    var id: String { path }
+
+    enum CodingKeys: String, CodingKey {
+        case name, path, size, modified, mime
+        case isDir = "is_dir"
+    }
+}
+
+struct FSListing: Codable {
+    let entries: [FSEntry]
 }
 
 enum ItemKind {

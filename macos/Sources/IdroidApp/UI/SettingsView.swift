@@ -10,6 +10,8 @@ struct SettingsView: View {
                 .tabItem { Label("Clipboard", systemImage: "doc.on.clipboard") }
             SaveLocationSettingsView()
                 .tabItem { Label("Files", systemImage: "folder") }
+            SharingSettings()
+                .tabItem { Label("Sharing", systemImage: "folder.badge.person.crop") }
             AccountSettings()
                 .tabItem { Label("Account", systemImage: "person.crop.circle") }
         }
@@ -45,6 +47,51 @@ private struct ClipboardSettings: View {
                 .disabled(!appState.clipboardSyncEnabled)
             Section {
                 Text("Copies are sent to every paired device. Passwords copied from password managers that mark them as concealed (1Password, Bitwarden…) are never sent, and items over 20 MB are skipped — send those as files.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+/// Folders paired devices can browse and download from (ADR-0004).
+private struct SharingSettings: View {
+    @EnvironmentObject var appState: AppState
+
+    var body: some View {
+        Form {
+            Section {
+                if appState.sharedFolders.isEmpty {
+                    Text("No folders shared yet.")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(appState.sharedFolders) { folder in
+                    HStack {
+                        Image(systemName: "folder.fill").foregroundStyle(Color.idroidIndigo)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(folder.name)
+                            Text(folder.url.path)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                        Spacer()
+                        Button {
+                            appState.removeSharedFolder(folder)
+                        } label: {
+                            Image(systemName: "minus.circle")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Stop sharing")
+                    }
+                }
+                Button("Share a Folder…") { appState.addSharedFolders() }
+            } header: {
+                Text("Shared folders")
+            } footer: {
+                Text("Your paired devices can browse these folders and download files from them while this Mac is online. They can't change or delete anything.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

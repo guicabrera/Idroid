@@ -2,6 +2,8 @@ package com.idroid.app.ui
 
 import android.content.Intent
 import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -28,6 +30,8 @@ import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Laptop
 import androidx.compose.material.icons.filled.MoreVert
@@ -53,6 +57,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -76,6 +81,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.idroid.app.IdroidApplication
 import com.idroid.app.R
 import com.idroid.app.data.ItemKind
 import com.idroid.app.data.ItemMeta
@@ -96,6 +102,7 @@ fun HomeScreen(
     onPickFiles: (SendTarget) -> Unit,
     onAddDevice: () -> Unit,
     onRemoveDevice: (PeerDevice) -> Unit,
+    onBrowseDevice: (PeerDevice) -> Unit,
     onLeave: () -> Unit,
     onDismissMessages: () -> Unit,
 ) {
@@ -139,6 +146,8 @@ fun HomeScreen(
 
             item { ClipboardSyncStatusCard() }
 
+            item { SensitiveClipboardRow() }
+
             item { MessageBanner(uiState, onDismissMessages) }
 
             item {
@@ -172,7 +181,9 @@ fun HomeScreen(
             item { SaveLocationRow() }
 
             item { SectionHeader("Devices", null) }
-            items(uiState.devices, key = { it.id }) { device -> DeviceRow(device, onRemove = { onRemoveDevice(device) }) }
+            items(uiState.devices, key = { it.id }) { device ->
+                DeviceRow(device, onBrowse = { onBrowseDevice(device) }, onRemove = { onRemoveDevice(device) })
+            }
             item {
                 OutlinedButton(onClick = onAddDevice, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Filled.Add, contentDescription = null)
@@ -180,6 +191,9 @@ fun HomeScreen(
                     Text("Add a Mac, iPad or another device")
                 }
             }
+
+            item { SectionHeader("Shared folders", null) }
+            item { SharedFoldersCard() }
         }
     }
 
@@ -418,7 +432,7 @@ private fun ItemMeta.icon(): ImageVector = when {
 }
 
 @Composable
-private fun DeviceRow(device: PeerDevice, onRemove: () -> Unit) {
+private fun DeviceRow(device: PeerDevice, onBrowse: () -> Unit, onRemove: () -> Unit) {
     var confirm by remember { mutableStateOf(false) }
     Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), colors = idroidCardColors()) {
         Row(
@@ -436,6 +450,9 @@ private fun DeviceRow(device: PeerDevice, onRemove: () -> Unit) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+            }
+            IconButton(onClick = onBrowse, enabled = device.online) {
+                Icon(Icons.Filled.FolderOpen, contentDescription = "Browse files on ${device.name}")
             }
             IconButton(onClick = { confirm = true }) { Icon(Icons.Filled.Delete, contentDescription = "Remove ${device.name}") }
         }
@@ -502,6 +519,87 @@ private fun ClipboardSyncStatusCard() {
             )
             Button(onClick = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }) {
                 Text("Open Accessibility settings")
+            }
+        }
+    }
+}
+
+/**
+ * Opt-in for syncing copies the OS flags as sensitive (authenticator
+ * codes, passwords), which are skipped by default (ADR-0002).
+ */
+@Composable
+private fun SensitiveClipboardRow() {
+    val app = LocalContext.current.applicationContext as IdroidApplication
+    var enabled by remember { mutableStateOf(app.clipboardSettings.syncSensitive) }
+    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), colors = idroidCardColors()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                Text("Sync sensitive copies", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "2FA codes and passwords that apps mark as sensitive are also sent to your devices.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(
+                checked = enabled,
+                onCheckedChange = {
+                    app.clipboardSettings.syncSensitive = it
+                    enabled = it
+                },
+            )
+        }
+    }
+}
+
+/**
+ * Folders on this phone that paired devices can browse (ADR-0004), picked
+ * through the system folder picker. Read-only for the other side.
+ */
+@Composable
+private fun SharedFoldersCard() {
+    val app = LocalContext.current.applicationContext as IdroidApplication
+    val repository = app.sharedFoldersRepository
+    var folders by remember { mutableStateOf(repository.load()) }
+    val pickFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { treeUri ->
+        if (treeUri != null) {
+            repository.add(treeUri)
+            folders = repository.load()
+        }
+    }
+    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), colors = idroidCardColors()) {
+        Column(modifier = Modifier.padding(vertical = 8.dp)) {
+            Text(
+                "Your Macs can browse and download from these folders while this phone is connected. They can't change anything.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+            folders.forEach { folder ->
+                Row(modifier = Modifier.fillMaxWidth().padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Text(
+                        folder.name,
+                        style = MaterialTheme.typography.titleSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f).padding(horizontal = 16.dp),
+                    )
+                    IconButton(onClick = {
+                        val saveFolder = app.saveLocationRepository.lastCustomFolder()
+                        repository.remove(folder, keepGrant = saveFolder == folder.treeUri)
+                        folders = repository.load()
+                    }) { Icon(Icons.Filled.Close, contentDescription = "Stop sharing ${folder.name}") }
+                }
+            }
+            TextButton(onClick = { pickFolder.launch(null) }, modifier = Modifier.padding(horizontal = 8.dp)) {
+                Icon(Icons.Filled.Add, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Share a folder")
             }
         }
     }

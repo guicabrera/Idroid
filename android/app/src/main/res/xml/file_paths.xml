@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Incoming clipboard images, shared with whatever app pastes them (ClipboardSync.kt). -->
+<!-- Incoming clipboard images, shared with whatever app pastes them (ClipboardSync.kt),
+     and files opened from another device's shared folders (FileBrowserScreen.kt). -->
 <paths>
     <cache-path name="clipboard" path="clipboard/" />
+    <cache-path name="remote" path="remote/" />
 </paths>

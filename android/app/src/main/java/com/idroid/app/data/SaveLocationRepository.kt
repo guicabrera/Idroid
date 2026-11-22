@@ -63,13 +63,18 @@ class SaveLocationRepository(private val context: Context) {
         return uri.takeIf { stillGranted }
     }
 
-    /** A tree URI from the picker is only usable across restarts once its grant is persisted. */
+    /**
+     * A tree URI from the picker is only usable across restarts once its
+     * grant is persisted. The previous custom folder's grant is released,
+     * unless it's also a shared folder (SharedFoldersRepository).
+     */
     private fun retainAccess(treeUri: Uri) {
         val resolver = context.contentResolver
         val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-        resolver.persistedUriPermissions
-            .filter { it.uri != treeUri }
-            .forEach { runCatching { resolver.releasePersistableUriPermission(it.uri, flags) } }
+        val previous = prefs.getString(KEY_FOLDER_URI, null)?.let(Uri::parse)
+        if (previous != null && previous != treeUri && !SharedFoldersRepository(context).isShared(previous)) {
+            runCatching { resolver.releasePersistableUriPermission(previous, flags) }
+        }
         resolver.takePersistableUriPermission(treeUri, flags)
     }
 

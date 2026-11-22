@@ -197,6 +197,66 @@ final class RelayAPIClient {
         return try JSONDecoder().decode(ItemMeta.self, from: data)
     }
 
+    // MARK: - Live file browsing (ADR-0004)
+
+    /// Lists a folder shared by another device; "/" lists its shared folders.
+    func listRemote(_ config: PairingConfig, deviceID: String, path: String) async throws -> [FSEntry] {
+        let data = try await execute(fsRequest(config, deviceID: deviceID, op: "list", path: path))
+        return try JSONDecoder().decode(FSListing.self, from: data).entries
+    }
+
+    /// Downloads a file from another device's shared folder to a temp file
+    /// the caller moves to its final destination.
+    func downloadRemote(_ config: PairingConfig, deviceID: String, path: String) async throws -> URL {
+        let request = fsRequest(config, deviceID: deviceID, op: "content", path: path)
+        let (tempURL, response): (URL, URLResponse)
+        do {
+            (tempURL, response) = try await session.download(for: request)
+        } catch {
+            throw RelayError.network(error.localizedDescription)
+        }
+        try Self.validate(response)
+        let stableURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.moveItem(at: tempURL, to: stableURL)
+        return stableURL
+    }
+
+    /// Answers an fs_request with an in-memory body (listings, errors).
+    func respondFS(_ config: PairingConfig, requestID: String, status: Int, contentType: String, body: Data) async throws {
+        var request = fsResponse(config, requestID: requestID, status: status, contentType: contentType)
+        request.httpBody = body
+        _ = try await execute(request, allowEmptyBody: true)
+    }
+
+    /// Answers an fs_request with a file streamed from disk.
+    func respondFS(_ config: PairingConfig, requestID: String, contentType: String, fileURL: URL) async throws {
+        let request = fsResponse(config, requestID: requestID, status: 200, contentType: contentType)
+        let response: URLResponse
+        do {
+            (_, response) = try await session.upload(for: request, fromFile: fileURL)
+        } catch {
+            throw RelayError.network(error.localizedDescription)
+        }
+        try Self.validate(response)
+    }
+
+    private func fsRequest(_ config: PairingConfig, deviceID: String, op: String, path: String) -> URLRequest {
+        let base = config.relayBaseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        var components = URLComponents(string: base + "/fs/\(deviceID)/\(op)")!
+        components.queryItems = [URLQueryItem(name: "path", value: path)]
+        var request = URLRequest(url: components.url!)
+        request.setValue("Bearer \(config.deviceToken)", forHTTPHeaderField: "Authorization")
+        return request
+    }
+
+    private func fsResponse(_ config: PairingConfig, requestID: String, status: Int, contentType: String) -> URLRequest {
+        var request = authedRequest(config, path: "/fs/respond/\(requestID)")
+        request.httpMethod = "POST"
+        request.setValue(String(status), forHTTPHeaderField: "X-Idroid-Status")
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        return request
+    }
+
     func openWebSocket(_ config: PairingConfig) -> URLSessionWebSocketTask {
         let wsURL = Self.toWebSocketURL(config.relayBaseURL) + "/ws?token=" + config.deviceToken
         return session.webSocketTask(with: URLRequest(url: URL(string: wsURL)!))
@@ -260,7 +320,7 @@ final class RelayAPIClient {
         return String(rest[..<end.lowerBound])
     }
 
-    private static func mimeType(for url: URL) -> String {
+    static func mimeType(for url: URL) -> String {
         if let type = UTType(filenameExtension: url.pathExtension), let mime = type.preferredMIMEType {
             return mime
         }

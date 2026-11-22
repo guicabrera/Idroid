@@ -73,6 +73,8 @@ private struct DeviceCard: View {
                     Menu {
                         Button("Send Files…") { appState.pickAndSendFiles(to: .device(device.id)) }
                         Button("Send Clipboard") { appState.sendClipboard(to: .device(device.id)) }
+                        Button("Browse Files") { appState.browse(device) }
+                            .disabled(!device.online)
                         Divider()
                         Button("Remove Device…", role: .destructive) { confirmRemove = true }
                     } label: {

@@ -71,7 +71,7 @@ The Android app declares an Accessibility Service whose only purpose is observin
 - Android: `AccessibilityService` configured to listen for clipboard-relevant events only (no need for full UI tree access); on change, read `ClipboardManager` content and hand it to the same sync client used for file/text transfers.
 - macOS: poll `NSPasteboard.general.changeCount` (simple, no special permission) on a short interval, or move to a change-notification approach if polling proves too chatty.
 - Sync payload needs a small metadata envelope (origin device, timestamp, content type: text/link vs. other) so a receiving device can avoid immediately re-sending back what it just received (echo loop prevention) — track the last-applied clipboard value's hash per device.
-- Do not sync clipboard content that is flagged `isSensitive` by the OS where that signal is available (e.g., Android's `ClipDescription.EXTRA_IS_SENSITIVE`, used by password managers and one-time-code autofill) — this is a free, OS-provided signal and filtering it out does not conflict with the "no confirmation prompt" decision, since it never reaches the sync path in the first place.
+- Do not sync clipboard content that is flagged `isSensitive` by the OS where that signal is available (e.g., Android's `ClipDescription.EXTRA_IS_SENSITIVE`, used by password managers and one-time-code autofill) — this is a free, OS-provided signal and filtering it out does not conflict with the "no confirmation prompt" decision, since it never reaches the sync path in the first place. On Android the user can opt in to syncing these anyway ("Sync sensitive copies", off by default), e.g. to paste 2FA codes from an authenticator app on the Mac.
 - Keep the per-app exclusion list described above as a documented future enhancement, not part of the MVP.
 
 ## Links
@@ -85,3 +85,4 @@ The Android app declares an Accessibility Service whose only purpose is observin
 | Date | Status | Notes |
 |------|--------|-------|
 | 2026-10-09 | accepted | Initial decision: Accessibility Service, automatic bidirectional sync, no confirmation prompt. |
+| 2026-11-22 | accepted | Android: added an opt-in setting (off by default) to also sync clipboard content flagged `EXTRA_IS_SENSITIVE`. |

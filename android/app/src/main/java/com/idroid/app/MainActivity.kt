@@ -15,7 +15,9 @@ import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.idroid.app.data.PairingLink
+import com.idroid.app.data.PeerDevice
 import com.idroid.app.service.RelaySyncService
+import com.idroid.app.ui.FileBrowserScreen
 import com.idroid.app.ui.HomeScreen
 import com.idroid.app.ui.IdroidViewModel
 import com.idroid.app.ui.PairingScreen
@@ -32,6 +34,9 @@ class MainActivity : ComponentActivity() {
 
     /** Showing the pairing screen to add another device while already paired. */
     private var addingDevice by mutableStateOf(false)
+
+    /** The device whose shared folders are being browsed (FileBrowserScreen). */
+    private var browsingDevice by mutableStateOf<PeerDevice?>(null)
 
     /** Where the files picked in the open document picker go. */
     private var pendingFileTarget: SendTarget = null
@@ -52,7 +57,10 @@ class MainActivity : ComponentActivity() {
                 }
 
                 val pairing = uiState.pairing
-                if (pairing == null || addingDevice) {
+                val browsing = browsingDevice
+                if (pairing != null && browsing != null && !addingDevice) {
+                    FileBrowserScreen(device = browsing, pairing = pairing, onBack = { browsingDevice = null })
+                } else if (pairing == null || addingDevice) {
                     PairingScreen(
                         apiClient = (application as IdroidApplication).relayApiClient,
                         existing = pairing,
@@ -83,6 +91,7 @@ class MainActivity : ComponentActivity() {
                         },
                         onAddDevice = { addingDevice = true },
                         onRemoveDevice = viewModel::removeDevice,
+                        onBrowseDevice = { browsingDevice = it },
                         onLeave = { viewModel.leave { stopService(Intent(this, RelaySyncService::class.java)) } },
                         onDismissMessages = viewModel::dismissMessages,
                     )

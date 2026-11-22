@@ -23,11 +23,12 @@ type Server struct {
 	items   *itemStore
 	hub     *hub
 	pairing *pairingStore
+	fs      *fsProxy
 	mux     *http.ServeMux
 }
 
 func NewServer(cfg Config, devices *deviceStore, items *itemStore, h *hub, pairing *pairingStore) *Server {
-	s := &Server{cfg: cfg, devices: devices, items: items, hub: h, pairing: pairing, mux: http.NewServeMux()}
+	s := &Server{cfg: cfg, devices: devices, items: items, hub: h, pairing: pairing, fs: newFSProxy(), mux: http.NewServeMux()}
 	s.routes()
 	return s
 }
@@ -50,6 +51,9 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /inbox/{id}/content", s.withAuth(s.handleInboxContent))
 	s.mux.Handle("DELETE /inbox/{id}", s.withAuth(s.handleInboxDelete))
 	s.mux.Handle("GET /ws", s.withAuth(s.handleWebSocket))
+
+	s.mux.Handle("GET /fs/{device_id}/{op}", s.withAuth(s.handleFSRequest))
+	s.mux.Handle("POST /fs/respond/{request_id}", s.withAuth(s.handleFSRespond))
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
