@@ -56,7 +56,7 @@ private struct ClipboardSettings: View {
 }
 
 /// Folders paired devices can browse and download from (ADR-0004).
-private struct SharingSettings: View {
+struct SharingSettings: View {
     @EnvironmentObject var appState: AppState
 
     var body: some View {

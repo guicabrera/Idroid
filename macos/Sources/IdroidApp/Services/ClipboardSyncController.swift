@@ -22,6 +22,11 @@ final class ClipboardSyncController {
     private var timer: Timer?
     private var lastSeenChangeCount = NSPasteboard.general.changeCount
     private var lastAppliedHash: String?
+    /// What this Mac last pushed. With two Macs on one Apple ID, Universal
+    /// Clipboard hands each one the other's push as if it were a local copy;
+    /// without this the copy bounces back to every device (and the phone
+    /// shows its "Copied" confirmation again each time).
+    private var lastSentHash: String?
 
     private var config: PairingConfig?
     private var apiClient: RelayAPIClient?
@@ -47,6 +52,10 @@ final class ClipboardSyncController {
     /// the bump that write causes isn't mistaken for a new local copy (and
     /// re-uploaded) on the next poll tick.
     func applyRemoteContent(_ data: Data, contentType: String) {
+        let hash = Self.hash(data)
+        // Already on the pasteboard (e.g. arrived via Universal Clipboard
+        // first): rewriting it would only bump changeCount for nothing.
+        if hash == lastAppliedHash || hash == lastSentHash { return }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         if contentType.hasPrefix("image/") {
@@ -60,7 +69,8 @@ final class ClipboardSyncController {
         } else {
             pasteboard.setString(String(decoding: data, as: UTF8.self), forType: .string)
         }
-        lastAppliedHash = Self.hash(data)
+        lastAppliedHash = hash
+        lastSentHash = nil
         lastSeenChangeCount = pasteboard.changeCount
     }
 
@@ -69,11 +79,20 @@ final class ClipboardSyncController {
         guard pasteboard.changeCount != lastSeenChangeCount else { return }
         lastSeenChangeCount = pasteboard.changeCount
 
-        guard isEnabled, let (data, contentType) = currentPayload() else { return }
-        if contentType.hasPrefix("image/") && !syncImages { return }
-        guard Self.hash(data) != lastAppliedHash else { return } // our own echo, belt-and-suspenders with the changeCount check above
+        guard let (data, contentType) = currentPayload() else {
+            forgetHashes() // something unsyncable replaced what they describe
+            return
+        }
+        let hash = Self.hash(data)
+        guard hash != lastAppliedHash else { return } // our own echo, belt-and-suspenders with the changeCount check above
+        guard hash != lastSentHash else { return }
 
-        guard let config, let apiClient else { return }
+        guard isEnabled, !(contentType.hasPrefix("image/") && !syncImages), let config, let apiClient else {
+            forgetHashes()
+            return
+        }
+        lastSentHash = hash
+        lastAppliedHash = nil
         Task {
             // Fetched per copy rather than cached, so a device paired a
             // moment ago gets the very next copy.
@@ -82,6 +101,11 @@ final class ClipboardSyncController {
                 _ = try? await Self.upload(data, contentType: contentType, to: peer.id, config: config, apiClient: apiClient)
             }
         }
+    }
+
+    private func forgetHashes() {
+        lastAppliedHash = nil
+        lastSentHash = nil
     }
 
     /// What a copy right now would sync, or nil if there's nothing

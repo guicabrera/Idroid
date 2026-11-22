@@ -104,6 +104,12 @@ final class AppState: ObservableObject {
 
         pairing = pairingStore.load()
         if let pairing { start(pairing) }
+
+        NotificationCenter.default.addObserver(forName: ShareHandoff.requested, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.receiveShare() }
+        }
+        // Launched by the Share menu: the URL may have arrived before this observer existed.
+        receiveShare()
     }
 
     // MARK: - Pairing and devices
@@ -125,18 +131,20 @@ final class AppState: ObservableObject {
     }
 
     func refreshDevices() {
+        Task { await loadDevices() }
+    }
+
+    private func loadDevices() async {
         guard let pairing else { return }
-        Task {
-            do {
-                let response = try await apiClient.listDevices(pairing)
-                me = response.me
-                devices = response.devices
-            } catch RelayError.http(401) {
-                // This Mac was removed from another device: back to pairing.
-                forgetPairing()
-            } catch {
-                errorMessage = error.localizedDescription
-            }
+        do {
+            let response = try await apiClient.listDevices(pairing)
+            me = response.me
+            devices = response.devices
+        } catch RelayError.http(401) {
+            // This Mac was removed from another device: back to pairing.
+            forgetPairing()
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 
@@ -431,7 +439,9 @@ final class AppState: ObservableObject {
         }
     }
 
-    func sendText(_ text: String, to target: SendTarget) {
+    /// `notify` also reports the outcome as a system notification, for sends
+    /// started outside the main window (the Share menu).
+    func sendText(_ text: String, to target: SendTarget, notify: Bool = false) {
         guard let pairing, !text.isEmpty else { return }
         let peers = recipients(target)
         guard !peers.isEmpty else { errorMessage = "No device to send to — add one first"; return }
@@ -440,14 +450,14 @@ final class AppState: ObservableObject {
                 for peer in peers {
                     _ = try await apiClient.uploadText(pairing, to: peer.id, kind: ItemKind.text, text: text)
                 }
-                showStatus("Sent to \(targetName(target))")
+                showStatus("Sent to \(targetName(target))", notify: notify)
             } catch {
-                errorMessage = error.localizedDescription
+                showError(error.localizedDescription, notify: notify)
             }
         }
     }
 
-    func sendFiles(_ urls: [URL], to target: SendTarget) {
+    func sendFiles(_ urls: [URL], to target: SendTarget, notify: Bool = false) {
         guard let pairing, !urls.isEmpty else { return }
         let peers = recipients(target)
         guard !peers.isEmpty else { errorMessage = "No device to send to — add one first"; return }
@@ -459,11 +469,47 @@ final class AppState: ObservableObject {
                     }
                 }
                 let what = urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) files"
-                showStatus("Sent \(what) to \(targetName(target))")
+                showStatus("Sent \(what) to \(targetName(target))", notify: notify)
             } catch {
-                errorMessage = error.localizedDescription
+                showError(error.localizedDescription, notify: notify)
             }
         }
+    }
+
+    /// Something was sent to Idroid from another app's Share menu. With one
+    /// device it goes straight there; with more, a menu at the pointer asks where.
+    func receiveShare() {
+        guard let payload = ShareHandoff.take() else { return }
+        guard pairing != nil else {
+            showError("Pair a device before sharing to Idroid", notify: true)
+            return
+        }
+        Task {
+            if devices.isEmpty { await loadDevices() }
+            guard !devices.isEmpty else {
+                showError("No device to send to — add one first", notify: true)
+                return
+            }
+            guard let target = devices.count == 1 ? .device(devices[0].id) : chooseShareTarget() else { return }
+            sendFiles(payload.files, to: target, notify: true)
+            for text in payload.texts { sendText(text, to: target, notify: true) }
+        }
+    }
+
+    private func chooseShareTarget() -> SendTarget? {
+        let menu = NSMenu()
+        menu.addItem(withTitle: "Send with Idroid to", action: nil, keyEquivalent: "").isEnabled = false
+        var choice: SendTarget?
+        func add(_ title: String, _ target: SendTarget) {
+            let item = ClosureMenuItem(title: title) { choice = target }
+            menu.addItem(item)
+        }
+        for device in devices { add(device.name, .device(device.id)) }
+        menu.addItem(.separator())
+        add("All Devices", .all)
+        NSApp.activate(ignoringOtherApps: true)
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+        return choice
     }
 
     func pickAndSendFiles(to target: SendTarget) {
@@ -506,7 +552,8 @@ final class AppState: ObservableObject {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    func showStatus(_ message: String) {
+    func showStatus(_ message: String, notify: Bool = false) {
+        if notify { postNotification(title: "Idroid", body: message) }
         errorMessage = nil
         statusMessage = message
         statusClearTask?.cancel()
@@ -514,6 +561,21 @@ final class AppState: ObservableObject {
             try? await Task.sleep(nanoseconds: 4_000_000_000)
             if !Task.isCancelled { statusMessage = nil }
         }
+    }
+
+    private func showError(_ message: String, notify: Bool) {
+        errorMessage = message
+        if notify { postNotification(title: "Idroid couldn't send", body: message) }
+    }
+
+    private func postNotification(title: String, body: String) {
+        guard Bundle.main.bundleIdentifier != nil else { return }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        UNUserNotificationCenter.current().add(
+            UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+        )
     }
 
     private func notifyArrivals(_ items: [ItemMeta]) {
@@ -543,4 +605,19 @@ final class AppState: ObservableObject {
             objectWillChange.send()
         }
     }
+}
+
+/// An NSMenuItem that runs a closure, for menus built in code.
+private final class ClosureMenuItem: NSMenuItem {
+    private let handler: () -> Void
+
+    init(title: String, handler: @escaping () -> Void) {
+        self.handler = handler
+        super.init(title: title, action: #selector(run), keyEquivalent: "")
+        target = self
+    }
+
+    required init(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    @objc private func run() { handler() }
 }

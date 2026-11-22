@@ -18,7 +18,9 @@ import java.security.MessageDigest
  * remote push (ADR-0002), so the outgoing listener
  * (ClipboardAccessibilityService) can recognize its own echo — setting the
  * clipboard locally also fires the change listener — and skip re-uploading
- * what it just received.
+ * what it just received. At most one of the two is set: whichever describes
+ * what's on the clipboard now, which incoming pushes are also checked
+ * against (rewriting it would just pop Android's "Copied" confirmation).
  */
 class ClipboardSyncState {
     @Volatile
@@ -109,6 +111,7 @@ private suspend fun upload(app: IdroidApplication, bytes: ByteArray, contentType
 
     val pairing = app.pairingRepository.load() ?: return
     state.lastSentHash = hash
+    state.lastAppliedHash = null // the clipboard now holds this local copy, not the last push
     val filename = if (contentType.startsWith("image/")) "clipboard.${extensionFor(contentType)}" else "shared-text.txt"
     // Every device in the group gets it; fetched per copy so a Mac paired a
     // moment ago gets the very next one.

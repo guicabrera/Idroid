@@ -10,6 +10,7 @@ struct FilesView: View {
     @State private var isLoading = false
     @State private var loadError: String?
     @State private var reloadToken = 0
+    @State private var isSharingPresented = false
 
     private var device: PeerDevice? {
         appState.devices.first { $0.id == appState.browsingDeviceID }
@@ -23,6 +24,7 @@ struct FilesView: View {
             .onAppear(perform: pickDefaultDevice)
             .onChange(of: appState.devices) { pickDefaultDevice() }
             .onChange(of: appState.browsingDeviceID) { navigate(to: "/") }
+            .sheet(isPresented: $isSharingPresented) { SharingSheet() }
             .task(id: LoadKey(deviceID: device?.id, online: device?.online ?? false, path: path, token: reloadToken)) {
                 await load()
             }
@@ -105,6 +107,13 @@ struct FilesView: View {
             .help("Enclosing folder")
         }
         ToolbarItemGroup {
+            Button {
+                isSharingPresented = true
+            } label: {
+                Label("Shared Folders", systemImage: "folder.badge.person.crop")
+            }
+            .help("Choose which folders on this Mac your devices can browse")
+
             Picker("Device", selection: $appState.browsingDeviceID) {
                 ForEach(appState.devices) { device in
                     Text(device.name + (device.online ? "" : " (offline)")).tag(Optional(device.id))
@@ -203,6 +212,25 @@ struct FilesView: View {
         case RelayError.http(504): return "The device didn't answer. Make sure Idroid is running on it."
         default: return error.localizedDescription
         }
+    }
+}
+
+/// This Mac's shared folders, reachable from the Files toolbar as well as Settings → Sharing.
+private struct SharingSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            SharingSettings()
+            Divider()
+            HStack {
+                Spacer()
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(12)
+        }
+        .frame(width: 480, height: 360)
     }
 }
 

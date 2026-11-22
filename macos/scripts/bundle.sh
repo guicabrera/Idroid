@@ -43,17 +43,78 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
 	<key>CFBundleExecutable</key><string>Idroid</string>
 	<key>CFBundleIconFile</key><string>Idroid</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
-	<key>CFBundleShortVersionString</key><string>0.1.0</string>
-	<key>CFBundleVersion</key><string>1</string>
+	<key>CFBundleShortVersionString</key><string>0.1.1</string>
+	<key>CFBundleVersion</key><string>2</string>
 	<key>LSMinimumSystemVersion</key><string>14.0</string>
 	<key>NSHighResolutionCapable</key><true/>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key><true/>
 	</dict>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key><string>com.idroid.mac</string>
+			<key>CFBundleURLSchemes</key><array><string>idroid</string></array>
+		</dict>
+	</array>
 </dict>
 </plist>
 EOF
+
+# Share menu extension ("Idroid" next to AirDrop). SwiftPM can't build an
+# .appex, so it's compiled directly; NSExtensionMain is the entry point.
+# Extensions must be sandboxed, hence its own entitlements.
+APPEX="$APP/Contents/PlugIns/IdroidShare.appex"
+mkdir -p "$APPEX/Contents/MacOS" "$APPEX/Contents/Resources"
+swiftc -O -parse-as-library -module-name IdroidShare \
+	-sdk "$SDKROOT" -target "$(uname -m)-apple-macos14.0" \
+	-Xlinker -e -Xlinker _NSExtensionMain \
+	ShareExtension/*.swift -o "$APPEX/Contents/MacOS/IdroidShare"
+cp "$APP/Contents/Resources/Idroid.icns" "$APPEX/Contents/Resources/"
+cat > "$APPEX/Contents/Info.plist" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key><string>com.idroid.mac.share</string>
+	<key>CFBundleName</key><string>Idroid</string>
+	<key>CFBundleDisplayName</key><string>Idroid</string>
+	<key>CFBundleExecutable</key><string>IdroidShare</string>
+	<key>CFBundleIconFile</key><string>Idroid</string>
+	<key>CFBundlePackageType</key><string>XPC!</string>
+	<key>CFBundleShortVersionString</key><string>0.1.1</string>
+	<key>CFBundleVersion</key><string>2</string>
+	<key>LSMinimumSystemVersion</key><string>14.0</string>
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionPointIdentifier</key><string>com.apple.share-services</string>
+		<key>NSExtensionPrincipalClass</key><string>IdroidShareViewController</string>
+		<key>NSExtensionAttributes</key>
+		<dict>
+			<key>NSExtensionActivationRule</key>
+			<dict>
+				<key>NSExtensionActivationSupportsFileWithMaxCount</key><integer>100</integer>
+				<key>NSExtensionActivationSupportsImageWithMaxCount</key><integer>100</integer>
+				<key>NSExtensionActivationSupportsMovieWithMaxCount</key><integer>100</integer>
+				<key>NSExtensionActivationSupportsWebURLWithMaxCount</key><integer>1</integer>
+				<key>NSExtensionActivationSupportsText</key><true/>
+			</dict>
+		</dict>
+	</dict>
+</dict>
+</plist>
+EOF
+cat > .build/IdroidShare.entitlements <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.app-sandbox</key><true/>
+</dict>
+</plist>
+EOF
+codesign --force --sign - --entitlements .build/IdroidShare.entitlements "$APPEX"
 
 codesign --force --sign - "$APP"
 echo "Built $APP"
@@ -63,6 +124,8 @@ if [ "${1:-}" = "--install" ]; then
 	sleep 1
 	rm -rf /Applications/Idroid.app
 	ditto "$APP" /Applications/Idroid.app
+	# Make the Share menu notice the (re)installed extension right away.
+	pluginkit -a /Applications/Idroid.app/Contents/PlugIns/IdroidShare.appex 2>/dev/null || true
 	open /Applications/Idroid.app
 	echo "Installed /Applications/Idroid.app"
 fi

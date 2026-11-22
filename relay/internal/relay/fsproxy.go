@@ -80,6 +80,7 @@ func (s *Server) handleFSRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.hub.IsOnline(targetID) {
+		log.Printf("fs %s %s -> %s: offline", op, caller.ID, targetID)
 		http.Error(w, "device offline", http.StatusServiceUnavailable)
 		return
 	}
@@ -107,12 +108,14 @@ func (s *Server) handleFSRequest(w http.ResponseWriter, r *http.Request) {
 	case reply = <-pending.reply:
 	case <-timer.C:
 		if s.fs.abandon(id) {
+			log.Printf("fs %s %s -> %s: no response", op, caller.ID, targetID)
 			http.Error(w, "device did not respond", http.StatusGatewayTimeout)
 			return
 		}
 		reply = <-pending.reply
 	case <-r.Context().Done():
 		if s.fs.abandon(id) {
+			log.Printf("fs %s %s -> %s: caller went away", op, caller.ID, targetID)
 			return
 		}
 		reply = <-pending.reply
@@ -132,8 +135,11 @@ func (s *Server) handleFSRequest(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", strconv.FormatInt(reply.r.ContentLength, 10))
 	}
 	w.WriteHeader(status)
-	if _, err := io.Copy(w, reply.r.Body); err != nil {
-		log.Printf("fs %s from %s: %v", op, targetID, err)
+	n, err := io.Copy(w, reply.r.Body)
+	if err != nil {
+		log.Printf("fs %s %s -> %s: status %d, copy failed after %d bytes: %v", op, caller.ID, targetID, status, n, err)
+	} else {
+		log.Printf("fs %s %s -> %s: status %d, %d bytes", op, caller.ID, targetID, status, n)
 	}
 }
 

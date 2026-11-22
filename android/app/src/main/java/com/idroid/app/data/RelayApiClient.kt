@@ -55,7 +55,7 @@ class RelayApiClient {
     suspend fun startPairing(relayBaseUrl: String, name: String, token: String? = null): PairStartResponse {
         val body = """{"name":"${jsonEscape(name)}"}""".toRequestBody("application/json".toMediaTypeOrNull())
         val request = Request.Builder().url(trimmed(relayBaseUrl) + "/pair/start").post(body).withToken(token).build()
-        val responseBody = execute(request).use { it.bodyStringOrThrow() }
+        val responseBody = executeForString(request)
         return json.decodeFromString(responseBody)
     }
 
@@ -64,14 +64,14 @@ class RelayApiClient {
         val body = """{"code":"${jsonEscape(code)}","name":"${jsonEscape(name)}"}"""
             .toRequestBody("application/json".toMediaTypeOrNull())
         val request = Request.Builder().url(trimmed(relayBaseUrl) + "/pair/claim").post(body).withToken(token).build()
-        val responseBody = execute(request).use { it.bodyStringOrThrow() }
+        val responseBody = executeForString(request)
         return json.decodeFromString(responseBody)
     }
 
     /** Polled by the device that called [startPairing] to learn when the other side has claimed the code. */
     suspend fun pollPairingStatus(relayBaseUrl: String, sessionId: String): PairStatusResponse {
         val request = Request.Builder().url(trimmed(relayBaseUrl) + "/pair/status/$sessionId").get().build()
-        val responseBody = execute(request).use { it.bodyStringOrThrow() }
+        val responseBody = executeForString(request)
         return json.decodeFromString(responseBody)
     }
 
@@ -84,7 +84,7 @@ class RelayApiClient {
     /** This phone plus every other device in its group. */
     suspend fun listDevices(config: PairingConfig): DevicesResponse {
         val request = authedRequest(config, "/devices").get().build()
-        val body = execute(request).use { it.bodyStringOrThrow() }
+        val body = executeForString(request)
         return json.decodeFromString(body)
     }
 
@@ -100,7 +100,7 @@ class RelayApiClient {
 
     suspend fun listInbox(config: PairingConfig): List<ItemMeta> {
         val request = authedRequest(config, "/inbox").get().build()
-        val body = execute(request).use { it.bodyStringOrThrow() }
+        val body = executeForString(request)
         return json.decodeFromString(body)
     }
 
@@ -174,7 +174,7 @@ class RelayApiClient {
             .build()
 
         val request = authedRequest(config, "/upload").post(multipart).build()
-        val body = execute(request).use { it.bodyStringOrThrow() }
+        val body = executeForString(request)
         return json.decodeFromString(body)
     }
 
@@ -183,7 +183,7 @@ class RelayApiClient {
     /** Lists a folder shared by another device; "/" lists its shared folders. */
     suspend fun listRemote(config: PairingConfig, deviceId: String, path: String): List<FsEntry> {
         val request = fsRequest(config, deviceId, "list", path).get().build()
-        val body = execute(request).use { it.bodyStringOrThrow() }
+        val body = executeForString(request)
         return json.decodeFromString<FsListing>(body).entries
     }
 
@@ -230,6 +230,20 @@ class RelayApiClient {
 
     private suspend fun execute(request: Request): Response = withContext(Dispatchers.IO) {
         httpClient.newCall(request).executeOrThrow()
+    }
+
+    /**
+     * Reads the body on the IO dispatcher too: execute() returns once the
+     * headers arrive, and reading the rest on the main thread throws
+     * NetworkOnMainThreadException whenever it hasn't all arrived yet.
+     */
+    private suspend fun executeForString(request: Request): String = withContext(Dispatchers.IO) {
+        try {
+            httpClient.newCall(request).executeOrThrow().use { it.bodyStringOrThrow() }
+        } catch (e: IOException) {
+            if (e is RelayException) throw e
+            throw RelayException("network error: ${e.message}")
+        }
     }
 
     private fun Call.executeOrThrow(): Response =

@@ -26,6 +26,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
@@ -130,7 +132,7 @@ class RelaySyncService : Service() {
      * IdroidViewModel.refreshInbox's filtering) or leaves it for the user to
      * see in the Home screen and surfaces one notification for the batch.
      */
-    private suspend fun processInbox() {
+    private suspend fun processInbox() = inboxMutex.withLock {
         val pairing = app.pairingRepository.load() ?: return
         val items = runCatching { app.relayApiClient.listInbox(pairing) }.getOrNull() ?: return
 
@@ -148,14 +150,26 @@ class RelaySyncService : Service() {
     private suspend fun applyIncomingClipboard(pairing: PairingConfig, item: ItemMeta) {
         runCatching {
             val bytes = app.relayApiClient.downloadBytes(pairing, item.id)
-            app.clipboardSyncState.lastAppliedHash = sha256(bytes)
-            val clip = buildIncomingClip(this, bytes, item.content_type)
-            withContext(Dispatchers.Main) {
-                getSystemService(ClipboardManager::class.java).setPrimaryClip(clip)
+            val hash = sha256(bytes)
+            val state = app.clipboardSyncState
+            // Every write makes Android 13+ show its "Copied" confirmation, so
+            // skip content this phone already holds: the same copy arriving
+            // from both Macs (they also share it via Universal Clipboard) or
+            // bouncing back after this phone sent it.
+            if (hash != state.lastAppliedHash && hash != state.lastSentHash) {
+                state.lastAppliedHash = hash
+                state.lastSentHash = null
+                val clip = buildIncomingClip(this, bytes, item.content_type)
+                withContext(Dispatchers.Main) {
+                    getSystemService(ClipboardManager::class.java).setPrimaryClip(clip)
+                }
             }
             app.relayApiClient.deleteItem(pairing, item.id)
         }
     }
+
+    /** The websocket connect and each new_item both trigger a pass; one at a time, so an item isn't applied twice. */
+    private val inboxMutex = Mutex()
 
     private fun showIncomingItemNotification() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&

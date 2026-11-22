@@ -64,6 +64,7 @@ import com.idroid.app.data.PeerDevice
 import com.idroid.app.data.ReceivedFileSaver
 import com.idroid.app.data.RelayException
 import com.idroid.app.data.SaveLocation
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -100,13 +101,17 @@ fun FileBrowserScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> 
     LaunchedEffect(device.id, path, reload) {
         loading = true
         error = null
-        runCatching { api.listRemote(pairing, device.id, path) }
-            .onSuccess { entries = it }
-            .onFailure { e ->
-                entries = emptyList()
-                if (e is RelayException && e.httpCode == 404 && path != "/") path = "/" else error = describe(e, device)
-            }
-        loading = false
+        try {
+            entries = api.listRemote(pairing, device.id, path)
+        } catch (e: CancellationException) {
+            // Another folder was opened before this one finished loading.
+            throw e
+        } catch (e: Exception) {
+            entries = emptyList()
+            if (e is RelayException && e.httpCode == 404 && path != "/") path = "/" else error = describe(e, device)
+        } finally {
+            loading = false
+        }
     }
 
     fun download(entry: FsEntry, block: suspend () -> Unit) {
@@ -192,7 +197,7 @@ fun FileBrowserScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> 
                 error != null -> CenteredMessage(error!!, action = "Try again") { reload++ }
                 entries.isEmpty() -> CenteredMessage(
                     if (path == "/") {
-                        "Nothing shared on ${device.name} yet. On the Mac, open Idroid → Settings → Sharing and add a folder."
+                        "Nothing shared on ${device.name} yet. On the Mac, open Idroid → Files → Shared Folders and add a folder."
                     } else {
                         "This folder is empty."
                     },
@@ -291,7 +296,8 @@ private fun parentOf(path: String): String {
 private fun describe(e: Throwable, device: PeerDevice): String = when ((e as? RelayException)?.httpCode) {
     503 -> "${device.name} is offline."
     504 -> "${device.name} didn't answer. Make sure Idroid is running on it."
-    else -> e.message ?: "Something went wrong"
+    null -> listOfNotNull(e::class.java.simpleName, e.message).joinToString(": ")
+    else -> "${e.message} (${e.httpCode})"
 }
 
 private fun formatBytes(bytes: Long): String {

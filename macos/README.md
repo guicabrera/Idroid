@@ -12,7 +12,11 @@ Swift + SwiftUI client for [ADR-0001](../docs/03-architecture/ADR-0001-transport
 ## What's deliberately not here yet
 
 - **QR code pairing** — the PIN flow is implemented (see above); encoding the code into a scannable QR image is still open.
-- **Share/Services menu integration** — sending is in-app only for now (pick a file via the Send File… button); hooking into macOS's Share menu/Services so other apps can send to Idroid directly is future work.
+- **Services menu integration** — the Share menu is covered (see below); a Services menu entry is not.
+
+## Share menu
+
+`ShareExtension/` is a share extension (`IdroidShare.appex`, built by `scripts/bundle.sh`) that puts "Idroid" in every app's Share menu, next to AirDrop. Extensions must be sandboxed and can't reach the pairing in the main app's Keychain, so it only copies the shared files/text/images to a named pasteboard and opens `idroid://share`; `ShareHandoff.swift` + `AppState.receiveShare` pick them up and send them — straight to the device when there's one, otherwise via a device menu at the pointer. If "Idroid" doesn't show up, enable it in System Settings › General › Login Items & Extensions › Sharing.
 - **Direct peer-to-peer connection** — per ADR-0001 the design is "try a direct tailnet connection first, fall back to the relay," but this first increment (like the Android client) only talks to the relay.
 
 ## Building and running
