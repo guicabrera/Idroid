@@ -78,7 +78,7 @@ Option 4 delivers both directions with a fraction of Option 3's code, because th
 ## Consequences
 
 - **Positive:** Both directions ship together, with no new listener in either app.
-- **Positive:** Exposure is limited to explicitly shared folders, read-only.
+- **Positive:** Exposure is limited to explicitly shared folders: read-only, except that the phone's folders accept new files (never overwrites or deletions).
 - **Positive:** Nothing browsed is persisted on the relay.
 - **Trade-off or risk:** Idroid now has two transfer models: async push (relay inbox) and live pull (tunneled). The UI shows when a device is offline and browsing is unavailable.
 - **Trade-off or risk:** Every byte passes through the Mac mini; throughput is bounded by its links. Acceptable for documents and photos; revisit with Option 3 if video-sized transfers become common.
@@ -93,8 +93,10 @@ Option 4 delivers both directions with a fraction of Option 3's code, because th
 - **Paths** are virtual: `/` lists the shared folders, `/<share>/sub/file` addresses a file. Each share is named after its folder, suffixed ` 2`, ` 3`… on clashes. Servers reject `.` and `..` segments; macOS resolves symlinks and checks the result is still inside the share.
 - **Listing JSON:** `{"entries":[{"name","path","is_dir","size","modified","mime"}]}`; `modified` is RFC 3339, folders first, hidden files skipped.
 - **macOS:** shared folders are picked in Settings → Sharing (`SharedFoldersStore`, plain paths since the app is not sandboxed); `FileShareResponder` answers requests; the Files section of the main window browses other devices (open, save, save to…).
-- **Android:** shared folders are SAF trees from `ACTION_OPEN_DOCUMENT_TREE` with a persisted read grant (`SharedFoldersRepository`); `FileShareResponder` walks them with `DocumentsContract`; `FileBrowserScreen` browses other devices (tap to open, download button to save).
-- **Out of scope:** writes (upload into a remote folder, rename, delete), folder downloads, thumbnails, `DocumentsProvider` / Finder integration, two-way sync, offline caching.
+- **Android:** shared folders are SAF trees from `ACTION_OPEN_DOCUMENT_TREE` with a persisted read grant (`SharedFoldersRepository`); `FileShareResponder` walks them with `DocumentsContract`, caching folder document ids by virtual path (5 min, dropped and retried on failure) since SAF can only look a child up by listing its parent; `FileBrowserScreen` browses other devices (tap to open, download button to save).
+- **Both browsers** keep the listings already opened in memory and show them immediately while refreshing, offer a clickable path bar, and report a folder that disappeared (404) instead of jumping back to the root.
+- **Uploads (added 2026-11-22, Mac → Android):** dropping files from Finder onto the Mac's Files view copies them into the folder being shown, via `PUT /fs/{device_id}/upload?path=<folder>/<name>`. The relay pushes `fs_request` with `op: "upload"`; the phone pulls the body with `GET /fs/pull/{request_id}` (streamed, read once; the 20 s deadline is suspended while it flows), creates the file with `DocumentsContract.createDocument` (the provider de-duplicates names) and answers `201` with the new entry. Only folders shared with a write grant accept uploads; folders shared earlier are read-only until picked again. Uploads never overwrite or delete, and the Mac's save location is not involved. The Mac does not accept uploads yet.
+- **Out of scope:** other writes (overwrite, rename, delete), uploads into the Mac, folder uploads, folder downloads, thumbnails, `DocumentsProvider` / Finder integration, two-way sync, offline caching.
 
 ## Links
 

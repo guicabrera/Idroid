@@ -53,6 +53,8 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /ws", s.withAuth(s.handleWebSocket))
 
 	s.mux.Handle("GET /fs/{device_id}/{op}", s.withAuth(s.handleFSRequest))
+	s.mux.Handle("PUT /fs/{device_id}/{op}", s.withAuth(s.handleFSRequest))
+	s.mux.Handle("GET /fs/pull/{request_id}", s.withAuth(s.handleFSPull))
 	s.mux.Handle("POST /fs/respond/{request_id}", s.withAuth(s.handleFSRespond))
 }
 

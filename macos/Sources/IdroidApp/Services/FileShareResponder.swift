@@ -13,6 +13,8 @@ enum FileShareResponder {
         guard let requestID = event.requestID, let op = event.op else { return }
         let path = event.path ?? "/"
         do {
+            // Only reads are served from this Mac; "upload" is phone-side for now.
+            guard op == "list" || op == "content" else { throw FSError.badRequest("\(op) is not supported by this device") }
             switch try resolve(path, folders: folders) {
             case .roots:
                 guard op == "list" else { throw FSError.badRequest("not a file") }

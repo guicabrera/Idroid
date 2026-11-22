@@ -384,15 +384,48 @@ final class AppState: ObservableObject {
         Task {
             do {
                 let tempURL = try await apiClient.downloadRemote(pairing, deviceID: deviceID, path: entry.path)
-                let dir = FileManager.default.temporaryDirectory.appendingPathComponent("Idroid", isDirectory: true)
+                // A folder per open, so two files with the same name (or one still open) aren't overwritten.
+                let dir = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("Idroid", isDirectory: true)
+                    .appendingPathComponent(UUID().uuidString, isDirectory: true)
                 try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
                 let destination = dir.appendingPathComponent(entry.name)
-                try? FileManager.default.removeItem(at: destination)
                 try FileManager.default.moveItem(at: tempURL, to: destination)
                 NSWorkspace.shared.open(destination)
             } catch {
                 errorMessage = error.localizedDescription
             }
+        }
+    }
+
+    /// Uploads files dropped from Finder into `folder` on another device.
+    /// Doesn't touch the save location: this writes on the other side only.
+    /// Returns once every file is done (or the first one failed).
+    func uploadRemote(_ urls: [URL], deviceID: String, folder: String) async {
+        guard let pairing, !urls.isEmpty else { return }
+        var uploaded = 0
+        var skippedFolders = 0
+        for url in urls {
+            if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+                skippedFolders += 1
+                continue
+            }
+            let target = (folder == "/" ? "" : folder) + "/" + url.lastPathComponent
+            do {
+                _ = try await apiClient.uploadRemote(pairing, deviceID: deviceID, path: target, fileURL: url)
+                uploaded += 1
+            } catch {
+                errorMessage = "Couldn't copy \(url.lastPathComponent): \(error.localizedDescription)"
+                return
+            }
+        }
+        if skippedFolders > 0 {
+            errorMessage = skippedFolders == 1 ? "Folders can't be copied yet; drop the files inside it instead." : "\(skippedFolders) folders skipped: folders can't be copied yet."
+        }
+        if uploaded > 0 {
+            let what = uploaded == 1 ? urls.first { !$0.hasDirectoryPath }?.lastPathComponent ?? "1 file" : "\(uploaded) files"
+            let folderName = folder.split(separator: "/").last.map(String.init) ?? folder
+            showStatus("Copied \(what) to \(folderName) on \(deviceName(for: deviceID))")
         }
     }
 

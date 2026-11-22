@@ -4,6 +4,8 @@ import UniformTypeIdentifiers
 enum RelayError: Error, LocalizedError {
     case network(String)
     case http(Int)
+    /// An error status with a message meant for the user (e.g. from the device answering an upload).
+    case rejected(Int, String)
     case emptyBody
     case invalidResponse
 
@@ -11,6 +13,7 @@ enum RelayError: Error, LocalizedError {
         switch self {
         case .network(let message): return "network error: \(message)"
         case .http(let code): return "request failed (\(code))"
+        case .rejected(_, let message): return message
         case .emptyBody: return "empty response body"
         case .invalidResponse: return "invalid response"
         }
@@ -219,6 +222,30 @@ final class RelayAPIClient {
         let stableURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.moveItem(at: tempURL, to: stableURL)
         return stableURL
+    }
+
+    /// Uploads a file into another device's shared folder as `path` (its
+    /// folder plus the file name); the device may rename it if the name is
+    /// taken, and returns the entry it created.
+    func uploadRemote(_ config: PairingConfig, deviceID: String, path: String, fileURL: URL) async throws -> FSEntry {
+        var request = fsRequest(config, deviceID: deviceID, op: "upload", path: path)
+        request.httpMethod = "PUT"
+        request.setValue(Self.mimeType(for: fileURL), forHTTPHeaderField: "Content-Type")
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await session.upload(for: request, fromFile: fileURL)
+        } catch {
+            throw RelayError.network(error.localizedDescription)
+        }
+        guard let http = response as? HTTPURLResponse else { throw RelayError.invalidResponse }
+        guard (200...299).contains(http.statusCode) else {
+            let message = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            if (400...499).contains(http.statusCode) && http.statusCode != 404 && !message.isEmpty {
+                throw RelayError.rejected(http.statusCode, message)
+            }
+            throw RelayError.http(http.statusCode)
+        }
+        return try JSONDecoder().decode(FSEntry.self, from: data)
     }
 
     /// Answers an fs_request with an in-memory body (listings, errors).

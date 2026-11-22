@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
@@ -187,16 +188,50 @@ class RelayApiClient {
         return json.decodeFromString<FsListing>(body).entries
     }
 
-    /** Streams a file from another device's shared folder straight to [output]. */
-    suspend fun downloadRemoteTo(config: PairingConfig, deviceId: String, path: String, output: OutputStream) =
-        withContext(Dispatchers.IO) {
-            val request = fsRequest(config, deviceId, "content", path).get().build()
-            execute(request).use { response ->
-                if (!response.isSuccessful) throw RelayException("download failed", response.code)
-                val responseBody = response.body ?: throw RelayException("empty response body")
-                responseBody.byteStream().use { it.copyTo(output) }
+    /**
+     * Streams a file from another device's shared folder straight to [output].
+     * [onProgress] gets the fraction done (0..1) when the size is known; the
+     * copy stops between chunks once the calling coroutine is cancelled.
+     */
+    suspend fun downloadRemoteTo(
+        config: PairingConfig,
+        deviceId: String,
+        path: String,
+        output: OutputStream,
+        onProgress: ((Float) -> Unit)? = null,
+    ) = withContext(Dispatchers.IO) {
+        val request = fsRequest(config, deviceId, "content", path).get().build()
+        execute(request).use { response ->
+            if (!response.isSuccessful) throw RelayException("download failed", response.code)
+            val responseBody = response.body ?: throw RelayException("empty response body")
+            val total = responseBody.contentLength()
+            responseBody.byteStream().use { input ->
+                val buffer = ByteArray(64 * 1024)
+                var copied = 0L
+                while (true) {
+                    ensureActive()
+                    val n = input.read(buffer)
+                    if (n < 0) break
+                    output.write(buffer, 0, n)
+                    copied += n
+                    if (total > 0) onProgress?.invoke(copied.toFloat() / total)
+                }
             }
         }
+    }
+
+    /**
+     * Opens the body of a file another device is uploading into one of our
+     * shared folders (fs_request op "upload"); the caller reads and closes it.
+     */
+    suspend fun pullFsUpload(config: PairingConfig, requestId: String): Response {
+        val response = execute(authedRequest(config, "/fs/pull/$requestId").get().build())
+        if (!response.isSuccessful) {
+            response.close()
+            throw RelayException("pull failed", response.code)
+        }
+        return response
+    }
 
     /** Answers an fs_request; [body] carries its own Content-Type and length. */
     suspend fun respondFs(config: PairingConfig, requestId: String, status: Int, body: RequestBody) {

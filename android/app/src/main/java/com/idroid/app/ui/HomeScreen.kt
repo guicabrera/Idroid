@@ -574,7 +574,7 @@ private fun SharedFoldersCard() {
     Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), colors = idroidCardColors()) {
         Column(modifier = Modifier.padding(vertical = 8.dp)) {
             Text(
-                "Your Macs can browse and download from these folders while this phone is connected. They can't change anything.",
+                "Your Macs can browse these folders while this phone is connected, download from them and drop new files in. They can't change or delete what's there.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -582,13 +582,16 @@ private fun SharedFoldersCard() {
             folders.forEach { folder ->
                 Row(modifier = Modifier.fillMaxWidth().padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Filled.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    Text(
-                        folder.name,
-                        style = MaterialTheme.typography.titleSmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f).padding(horizontal = 16.dp),
-                    )
+                    Column(modifier = Modifier.weight(1f).padding(horizontal = 16.dp)) {
+                        Text(folder.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (!folder.writable) {
+                            Text(
+                                "Read-only — pick it again with Share a folder to accept files from your Mac",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                     IconButton(onClick = {
                         val saveFolder = app.saveLocationRepository.lastCustomFolder()
                         repository.remove(folder, keepGrant = saveFolder == folder.treeUri)

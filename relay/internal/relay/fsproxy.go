@@ -15,9 +15,14 @@ import (
 // pipes the target's answer (POST /fs/respond/{id}) straight back to the
 // caller. Both apps already hold a websocket open to the relay, so neither
 // has to accept inbound connections.
+//
+// Uploads ("PUT /fs/{device_id}/upload") run the other way round: the target
+// pulls the caller's body with GET /fs/pull/{id}, writes it, then answers as
+// usual. Still nothing touches the relay's disk.
 
 // fsResponseTimeout bounds how long a caller waits for the target to start
-// answering; the transfer itself, once started, has no deadline.
+// answering (or, for an upload, to start and to finish pulling the body); the
+// transfer itself, once started, has no deadline.
 const fsResponseTimeout = 20 * time.Second
 
 type fsReply struct {
@@ -28,6 +33,14 @@ type fsReply struct {
 type fsPending struct {
 	targetID string
 	reply    chan fsReply
+
+	// Set for uploads only: the caller's request, whose body the target
+	// pulls once. started and pulled are closed when that pull begins and ends.
+	upload  *http.Request
+	started chan struct{}
+	pulled  chan struct{}
+	pulling bool // guarded by fsProxy.mu
+	wasPull bool // guarded by fsProxy.mu
 }
 
 type fsProxy struct {
@@ -52,13 +65,36 @@ func (p *fsProxy) claim(id, responderID string) (*fsPending, bool) {
 	return pending, true
 }
 
+// startPull hands an upload's body to its target, once.
+func (p *fsProxy) startPull(id, responderID string) (*fsPending, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	pending, ok := p.pending[id]
+	if !ok || pending.targetID != responderID || pending.upload == nil || pending.wasPull {
+		return nil, false
+	}
+	pending.wasPull = true
+	pending.pulling = true
+	close(pending.started)
+	return pending, true
+}
+
+func (p *fsProxy) endPull(pending *fsPending) {
+	p.mu.Lock()
+	pending.pulling = false
+	p.mu.Unlock()
+	close(pending.pulled)
+}
+
 // abandon drops a request the caller stopped waiting for. It reports false
 // when a responder has already claimed it, in which case its reply is on
-// the way and the caller must still receive it.
+// the way and the caller must still receive it, or while the target is
+// still reading the caller's upload body, which must outlive that read.
 func (p *fsProxy) abandon(id string) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if _, ok := p.pending[id]; !ok {
+	pending, ok := p.pending[id]
+	if !ok || pending.pulling {
 		return false
 	}
 	delete(p.pending, id)
@@ -66,13 +102,16 @@ func (p *fsProxy) abandon(id string) bool {
 }
 
 // handleFSRequest serves GET /fs/{device_id}/{op}?path=... where op is
-// "list" (JSON directory listing) or "content" (file bytes).
+// "list" (JSON directory listing) or "content" (file bytes), and
+// PUT /fs/{device_id}/upload?path=... (the body becomes that file; the target
+// may pick another name if it exists).
 func (s *Server) handleFSRequest(w http.ResponseWriter, r *http.Request) {
 	caller := deviceFromContext(r)
 	targetID := r.PathValue("device_id")
 	op := r.PathValue("op")
-	if op != "list" && op != "content" {
-		http.Error(w, "op must be list or content", http.StatusNotFound)
+	isUpload := r.Method == http.MethodPut
+	if isUpload && op != "upload" || !isUpload && op != "list" && op != "content" {
+		http.Error(w, "op must be list, content or upload", http.StatusNotFound)
 		return
 	}
 	if targetID == caller.ID || !s.devices.SameGroup(caller.ID, targetID) {
@@ -91,6 +130,11 @@ func (s *Server) handleFSRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pending := &fsPending{targetID: targetID, reply: make(chan fsReply, 1)}
+	if isUpload {
+		pending.upload = r
+		pending.started = make(chan struct{})
+		pending.pulled = make(chan struct{})
+	}
 	s.fs.mu.Lock()
 	s.fs.pending[id] = pending
 	s.fs.mu.Unlock()
@@ -103,22 +147,34 @@ func (s *Server) handleFSRequest(w http.ResponseWriter, r *http.Request) {
 
 	timer := time.NewTimer(fsResponseTimeout)
 	defer timer.Stop()
+	// started and pulled stay nil (never ready) unless this is an upload.
+	started, pulled, gone := pending.started, pending.pulled, r.Context().Done()
 	var reply fsReply
-	select {
-	case reply = <-pending.reply:
-	case <-timer.C:
-		if s.fs.abandon(id) {
-			log.Printf("fs %s %s -> %s: no response", op, caller.ID, targetID)
-			http.Error(w, "device did not respond", http.StatusGatewayTimeout)
-			return
+wait:
+	for {
+		select {
+		case reply = <-pending.reply:
+			break wait
+		case <-started:
+			// The target is reading the upload: no deadline while bytes flow.
+			timer.Stop()
+			started = nil
+		case <-pulled:
+			timer.Reset(fsResponseTimeout)
+			pulled = nil
+		case <-timer.C:
+			if s.fs.abandon(id) {
+				log.Printf("fs %s %s -> %s: no response", op, caller.ID, targetID)
+				http.Error(w, "device did not respond", http.StatusGatewayTimeout)
+				return
+			}
+		case <-gone:
+			gone = nil
+			if s.fs.abandon(id) {
+				log.Printf("fs %s %s -> %s: caller went away", op, caller.ID, targetID)
+				return
+			}
 		}
-		reply = <-pending.reply
-	case <-r.Context().Done():
-		if s.fs.abandon(id) {
-			log.Printf("fs %s %s -> %s: caller went away", op, caller.ID, targetID)
-			return
-		}
-		reply = <-pending.reply
 	}
 	defer close(reply.done)
 
@@ -158,4 +214,26 @@ func (s *Server) handleFSRespond(w http.ResponseWriter, r *http.Request) {
 	pending.reply <- fsReply{r: r, done: done}
 	<-done
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleFSPull serves GET /fs/pull/{request_id}: the target of an upload
+// reads the caller's body, streamed through as it arrives.
+func (s *Server) handleFSPull(w http.ResponseWriter, r *http.Request) {
+	responder := deviceFromContext(r)
+	pending, ok := s.fs.startPull(r.PathValue("request_id"), responder.ID)
+	if !ok {
+		http.Error(w, "upload not found, expired or already read", http.StatusGone)
+		return
+	}
+	defer s.fs.endPull(pending)
+	upload := pending.upload
+	if v := upload.Header.Get("Content-Type"); v != "" {
+		w.Header().Set("Content-Type", v)
+	}
+	if upload.ContentLength >= 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(upload.ContentLength, 10))
+	}
+	if n, err := io.Copy(w, upload.Body); err != nil {
+		log.Printf("fs upload pull %s: copy failed after %d bytes: %v", responder.ID, n, err)
+	}
 }

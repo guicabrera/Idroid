@@ -7,6 +7,7 @@ import android.os.Environment
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import java.io.OutputStream
 
@@ -46,7 +47,7 @@ class ReceivedFileSaver(private val context: Context, private val relayApiClient
         val target = withContext(Dispatchers.IO) {
             context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
         } ?: error("could not create download entry")
-        write(target, download)
+        writeOrDelete(target, download)
     }
 
     /** Document providers de-duplicate names themselves, like MediaStore. */
@@ -55,7 +56,19 @@ class ReceivedFileSaver(private val context: Context, private val relayApiClient
             val parent = DocumentsContract.buildDocumentUriUsingTree(treeUri, DocumentsContract.getTreeDocumentId(treeUri))
             DocumentsContract.createDocument(context.contentResolver, parent, mimeType, filename)
         } ?: error("could not create file in the chosen folder — pick it again in settings")
-        write(target, download)
+        writeOrDelete(target, download)
+    }
+
+    /** The entry was created just for this download, so a failed or cancelled one leaves nothing behind. */
+    private suspend fun writeOrDelete(target: Uri, download: suspend (OutputStream) -> Unit) {
+        try {
+            write(target, download)
+        } catch (e: Throwable) {
+            withContext(NonCancellable + Dispatchers.IO) {
+                runCatching { context.contentResolver.delete(target, null, null) }
+            }
+            throw e
+        }
     }
 
     suspend fun write(target: Uri, download: suspend (OutputStream) -> Unit) {
