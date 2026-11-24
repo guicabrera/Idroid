@@ -4,7 +4,9 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- Cleartext HTTP is allowed because the relay is only reachable over the
@@ -93,11 +95,28 @@
             Foreground service that keeps the relay websocket open so push
             notifications (ADR-0001) arrive without polling, and applies
             incoming clipboard pushes (ADR-0002) to this device's clipboard.
+            specialUse rather than dataSync: Android 15 caps dataSync at 6h
+            per day (then kills the app) and forbids starting it at boot.
         -->
         <service
             android:name=".service.RelaySyncService"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:stopWithTask="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Persistent connection to the user's own relay to receive files and clipboard pushes from paired devices" />
+        </service>
+
+        <!-- Restarts RelaySyncService after a reboot or an app update. -->
+        <receiver
+            android:name=".service.BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <!--
             Automatic clipboard sync (ADR-0002): the only Android mechanism

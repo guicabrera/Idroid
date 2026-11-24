@@ -1,15 +1,21 @@
 package com.idroid.app.service
 
 import android.Manifest
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.PendingIntent
 import android.app.Service
 import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.SystemClock
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.idroid.app.IdroidApplication
 import com.idroid.app.MainActivity
@@ -51,17 +57,45 @@ class RelaySyncService : Service() {
 
     private val app get() = application as IdroidApplication
 
-    override fun onCreate() {
-        super.onCreate()
-        startForeground(NOTIFICATION_ID_SYNC, buildSyncNotification())
-    }
-
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        connect()
+        // Called on every start (activity, boot, accessibility service,
+        // START_STICKY restart), so it must promote to foreground each time
+        // and can't let a refused promotion crash the whole app.
+        val promoted = runCatching {
+            ServiceCompat.startForeground(
+                this,
+                NOTIFICATION_ID_SYNC,
+                buildSyncNotification(),
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                } else {
+                    0
+                },
+            )
+        }
+        if (promoted.isFailure) {
+            Log.w(TAG, "could not start in foreground", promoted.exceptionOrNull())
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        // Repeated starts shouldn't tear down a healthy connection.
+        if (webSocket == null) connect()
         return START_STICKY
     }
 
+    /**
+     * Swiping the app out of recents: Samsung/One UI kills the whole process
+     * with it and START_STICKY often never brings it back, so an alarm (which
+     * survives process death; only Force stop clears it) restarts us.
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        scheduleRestart(this)
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onDestroy() {
+        // Killed by the system rather than unpaired: come back too.
+        scheduleRestart(this)
         app.relayConnected.value = false
         webSocket?.close(1000, "service stopping")
         serviceScope.cancel()
@@ -81,7 +115,12 @@ class RelaySyncService : Service() {
         webSocket = app.relayApiClient.openWebSocket(
             pairing,
             object : WebSocketListener() {
+                // A replaced socket's late callbacks must not reconnect
+                // again, or each one would spawn another connection.
+                private fun isCurrent(webSocket: WebSocket) = webSocket === this@RelaySyncService.webSocket
+
                 override fun onOpen(webSocket: WebSocket, response: Response) {
+                    if (!isCurrent(webSocket)) return
                     app.relayConnected.value = true
                     // Catch up on anything that arrived while disconnected.
                     app.relayEvents.tryEmit("new_item")
@@ -94,13 +133,18 @@ class RelaySyncService : Service() {
                 }
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                    if (!isCurrent(webSocket)) return
                     app.relayConnected.value = false
                     scheduleReconnect()
                 }
 
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    if (!isCurrent(webSocket)) return
                     app.relayConnected.value = false
-                    if (code != 1000) scheduleReconnect()
+                    // Even a clean close from the relay (e.g. it restarted)
+                    // should reconnect; ours in onDestroy lands in a
+                    // cancelled scope and does nothing.
+                    scheduleReconnect()
                 }
             },
         )
@@ -178,17 +222,11 @@ class RelaySyncService : Service() {
             return
         }
 
-        val openAppIntent = PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE,
-        )
         val notification = NotificationCompat.Builder(this, IdroidApplication.CHANNEL_INCOMING)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(getString(R.string.app_name))
             .setContentText("New item in your inbox")
-            .setContentIntent(openAppIntent)
+            .setContentIntent(openAppIntent())
             .setAutoCancel(true)
             .build()
         NotificationManagerCompat.from(this).notify(NOTIFICATION_ID_INCOMING, notification)
@@ -199,12 +237,61 @@ class RelaySyncService : Service() {
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(getString(R.string.notification_sync_active_title))
             .setContentText(getString(R.string.notification_sync_active_text))
+            .setContentIntent(openAppIntent())
             .setOngoing(true)
             .build()
 
-    private companion object {
-        const val NOTIFICATION_ID_SYNC = 1
-        const val NOTIFICATION_ID_INCOMING = 2
-        const val RECONNECT_DELAY_MS = 5_000L
+    /** Brings the existing app task to the front (or launches it), like tapping the launcher icon. */
+    private fun openAppIntent(): PendingIntent = PendingIntent.getActivity(
+        this,
+        0,
+        Intent(this, MainActivity::class.java)
+            .setAction(Intent.ACTION_MAIN)
+            .addCategory(Intent.CATEGORY_LAUNCHER)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+    )
+
+    companion object {
+        private const val TAG = "RelaySyncService"
+        private const val NOTIFICATION_ID_SYNC = 1
+        private const val NOTIFICATION_ID_INCOMING = 2
+        private const val RECONNECT_DELAY_MS = 5_000L
+        private const val RESTART_DELAY_MS = 3_000L
+        private const val RESTART_REQUEST_CODE = 3
+
+        /**
+         * Restarts the service in ~3s via AlarmManager if still paired. Starting a
+         * foreground service from an alarm needs the battery exemption the home
+         * screen asks for.
+         */
+        fun scheduleRestart(context: Context) {
+            val app = context.applicationContext as IdroidApplication
+            if (app.pairingRepository.load() == null) return
+            val restart = PendingIntent.getForegroundService(
+                context,
+                RESTART_REQUEST_CODE,
+                Intent(context, RelaySyncService::class.java),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+            context.getSystemService(AlarmManager::class.java).setAndAllowWhileIdle(
+                AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                SystemClock.elapsedRealtime() + RESTART_DELAY_MS,
+                restart,
+            )
+        }
+
+        /**
+         * Starts the service if this phone is paired. Safe to call from the
+         * background (boot, accessibility service): Android 12+ may refuse
+         * there, which is logged instead of crashing.
+         */
+        fun start(context: Context) {
+            val app = context.applicationContext as IdroidApplication
+            if (app.pairingRepository.load() == null) return
+            runCatching {
+                ContextCompat.startForegroundService(context, Intent(context, RelaySyncService::class.java))
+            }.onFailure { Log.w(TAG, "could not start sync service", it) }
+        }
     }
 }

@@ -1,6 +1,10 @@
 package com.idroid.app.ui
 
+import android.annotation.SuppressLint
+import android.content.Context
 import android.content.Intent
+import android.net.Uri
+import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -24,6 +28,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.BatteryAlert
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.ContentPaste
@@ -143,6 +148,8 @@ fun HomeScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item { StatusHeader(uiState) }
+
+            item { BackgroundRunStatusCard() }
 
             item { ClipboardSyncStatusCard() }
 
@@ -477,6 +484,57 @@ private fun PeerDevice.icon(): ImageVector {
         else -> Icons.Filled.Laptop
     }
 }
+
+/**
+ * With battery optimization on, Android (and OEM task killers on top of it)
+ * stops RelaySyncService and blocks restarting it from the background, so
+ * nothing arrives until the app is opened again. Asks once per resume until
+ * the user exempts the app.
+ */
+@SuppressLint("BatteryLife") // sideloaded, not distributed through Play
+@Composable
+private fun BackgroundRunStatusCard() {
+    val context = LocalContext.current
+    var exempt by remember { mutableStateOf(isIgnoringBatteryOptimizations(context)) }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) exempt = isIgnoringBatteryOptimizations(context)
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    if (exempt) return
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.BatteryAlert, contentDescription = null)
+                Text("Idroid may stop in the background", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(start = 8.dp))
+            }
+            Text(
+                "Allow Idroid to run without battery restrictions so it stays connected and restarts on its own.",
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
+            )
+            Button(onClick = {
+                val request = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${context.packageName}"))
+                runCatching { context.startActivity(request) }
+                    .onFailure { context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
+            }) {
+                Text("Allow background use")
+            }
+        }
+    }
+}
+
+private fun isIgnoringBatteryOptimizations(context: Context): Boolean =
+    context.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(context.packageName)
 
 /**
  * Automatic clipboard sync (ADR-0002) needs the Accessibility Service

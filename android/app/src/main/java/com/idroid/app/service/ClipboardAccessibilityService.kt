@@ -35,6 +35,9 @@ class ClipboardAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         clipboardManager = getSystemService(ClipboardManager::class.java)
         clipboardManager.addPrimaryClipChangedListener(listener)
+        // The system rebinds an enabled accessibility service whenever the
+        // process dies, so this revives the relay connection too.
+        RelaySyncService.start(this)
     }
 
     override fun onDestroy() {

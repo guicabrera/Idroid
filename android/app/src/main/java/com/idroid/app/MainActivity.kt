@@ -12,7 +12,6 @@ import androidx.activity.viewModels
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.idroid.app.data.PairingLink
 import com.idroid.app.data.PeerDevice
@@ -114,9 +113,7 @@ class MainActivity : ComponentActivity() {
         pendingPairingLink = link
     }
 
-    private fun startSyncService() {
-        ContextCompat.startForegroundService(this, Intent(this, RelaySyncService::class.java))
-    }
+    private fun startSyncService() = RelaySyncService.start(this)
 
     private fun requestNotificationPermissionIfNeeded() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
