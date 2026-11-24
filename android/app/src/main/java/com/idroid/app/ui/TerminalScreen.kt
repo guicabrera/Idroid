@@ -119,6 +119,47 @@ private sealed interface Entry {
 /** What the text box sends: a shell command, a message to the AI agent, or to Claude Code on the Mac. */
 private enum class InputMode { SHELL, AI, CLAUDE }
 
+/**
+ * Lists the vault's Claude Code conversations as JSON (newest first, titled
+ * by Claude Code's own ai-title or the first message). The vault path is "$1".
+ */
+private const val LIST_CONVERSATIONS = """python3 - "$1" <<'PY'
+import json, os, re, sys, glob
+vault = sys.argv[1]
+d = os.path.expanduser("~/.claude/projects/" + re.sub(r"[^A-Za-z0-9]", "-", vault))
+out = []
+for f in sorted(glob.glob(d + "/*.jsonl"), key=os.path.getmtime, reverse=True)[:40]:
+    title = first = None
+    with open(f, errors="ignore") as fh:
+        for line in fh:
+            if '"ai-title"' in line:
+                try: title = json.loads(line).get("aiTitle") or title
+                except Exception: pass
+            elif first is None and '"user-message' in line or first is None and '"type":"user"' in line:
+                m = re.search(r"<user-message>\\n?(.*?)\\n?</user-message>", line)
+                if m: first = m.group(1).replace("\\n", " ")[:80]
+    if not (title or first): continue
+    out.append({"id": os.path.basename(f)[:-6], "title": title or first, "modified": int(os.path.getmtime(f))})
+print(json.dumps(out[:30], ensure_ascii=False))
+PY"""
+
+/**
+ * Vault conventions the Obsidian Copilot gives its Claude sessions, so the
+ * phone's Claude Code works the same way. No single quotes: it is passed
+ * single-quoted on the command line.
+ */
+private const val VAULT_PROMPT = "You are working in the Obsidian vault of markdown notes (the current folder), " +
+    "reached from their phone. For questions about their notes, search the vault first. Cite notes as [[note title]], " +
+    "use dollar-sign math, embed images as ![[file.png]]. Edit notes with your file tools, keep frontmatter valid, and " +
+    "keep scratch files out of the vault. Follow AGENTS.md and CLAUDE.md. Replies are read on a phone: keep them short."
+
+/** How much Claude Code may do without anyone at the Mac to approve it. */
+private enum class ClaudeAccess(val label: String, val flags: String) {
+    READ("Read only", "--permission-mode default"),
+    EDIT("Edit notes", "--permission-mode acceptEdits"),
+    ALL("Everything", "--dangerously-skip-permissions"),
+}
+
 /** Claude Code session ids are UUIDs; anything else is never put on a command line. */
 private val SESSION_ID = Regex("^[0-9a-fA-F-]{8,64}$")
 
@@ -148,6 +189,13 @@ fun TerminalScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Uni
     val aiMode = mode != InputMode.SHELL
     /** The Claude Code conversation being continued (claude --resume), if any. */
     var claudeSession by remember { mutableStateOf<String?>(null) }
+    var claudeTitle by remember { mutableStateOf<String?>(null) }
+    val prefs = remember { app.getSharedPreferences("idroid_settings", android.content.Context.MODE_PRIVATE) }
+    var claudeAccess by remember {
+        mutableStateOf(runCatching { ClaudeAccess.valueOf(prefs.getString("claude.access", null)!!) }.getOrDefault(ClaudeAccess.EDIT))
+    }
+    var conversations by remember { mutableStateOf<List<com.idroid.app.data.ClaudeConversation>?>(null) }
+    var showConversations by remember { mutableStateOf(false) }
     var suggestions by remember { mutableStateOf(emptyList<String>()) }
     var running by remember { mutableStateOf<Job?>(null) }
     var tab by remember { mutableStateOf(0) }
@@ -202,12 +250,18 @@ fun TerminalScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Uni
         val reply = Entry.Ai("", pending = true)
         entries += reply
         val resume = claudeSession?.takeIf { SESSION_ID.matches(it) }?.let { " --resume $it" }.orEmpty()
+        // Claude Code works in the vault (like the Copilot), falling back to the terminal's folder.
+        val folder = catalog?.vault ?: cwd
         running = scope.launch {
             try {
                 val out = StringBuilder()
                 val result = api.execCommand(
                     pairing, device.id,
-                    ExecRequest(command = "claude -p --output-format json$resume \"\$1\"", input = prompt, cwd = cwd),
+                    ExecRequest(
+                        command = "claude -p --output-format json ${claudeAccess.flags} --append-system-prompt '$VAULT_PROMPT'$resume \"\$1\"",
+                        input = prompt,
+                        cwd = folder,
+                    ),
                 ) { out.append(it) }
                 val jsonLine = out.lines().lastOrNull { it.trimStart().startsWith("{") }
                 val obj = jsonLine?.let { runCatching { kotlinx.serialization.json.Json.parseToJsonElement(it) as? kotlinx.serialization.json.JsonObject }.getOrNull() }
@@ -223,6 +277,21 @@ fun TerminalScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Uni
                 reply.pending = false
                 running = null
             }
+        }
+    }
+
+    fun loadConversations() {
+        val vault = catalog?.vault ?: return
+        conversations = null
+        showConversations = true
+        scope.launch {
+            val out = StringBuilder()
+            conversations = runCatching {
+                api.execCommand(pairing, device.id, ExecRequest(command = LIST_CONVERSATIONS, input = vault)) { out.append(it) }
+                val line = out.lines().last { it.trimStart().startsWith("[") }
+                kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+                    .decodeFromString<List<com.idroid.app.data.ClaudeConversation>>(line)
+            }.getOrElse { emptyList() }
         }
     }
 
@@ -378,11 +447,17 @@ fun TerminalScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Uni
             if (mode == InputMode.CLAUDE) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        if (claudeSession == null) "Claude Code · new conversation in $cwd" else "Claude Code · continuing the conversation",
+                        claudeTitle?.let { "Continuing: $it" }
+                            ?: if (claudeSession == null) "New conversation in ${catalog?.vault?.substringAfterLast('/') ?: cwd}" else "Continuing the conversation",
                         style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f), maxLines = 1,
                     )
-                    if (claudeSession != null) TextButton(onClick = { claudeSession = null }) { Text("New chat") }
+                    TextButton(onClick = {
+                        claudeAccess = ClaudeAccess.entries[(claudeAccess.ordinal + 1) % ClaudeAccess.entries.size]
+                        prefs.edit().putString("claude.access", claudeAccess.name).apply()
+                    }) { Text(claudeAccess.label, fontSize = 12.sp) }
+                    if (catalog?.vault != null) TextButton(onClick = ::loadConversations) { Text("Chats", fontSize = 12.sp) }
+                    if (claudeSession != null) TextButton(onClick = { claudeSession = null; claudeTitle = null }) { Text("New", fontSize = 12.sp) }
                 }
             }
             Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -430,6 +505,38 @@ fun TerminalScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Uni
             text = { OutlinedTextField(value, { value = it }, label = { Text("Input") }, singleLine = true) },
             confirmButton = { Button(onClick = { askInput = null; runAction(action, value) }) { Text("Run") } },
             dismissButton = { TextButton(onClick = { askInput = null }) { Text("Cancel") } },
+        )
+    }
+
+    if (showConversations) {
+        AlertDialog(
+            onDismissRequest = { showConversations = false },
+            title = { Text("Vault conversations") },
+            text = {
+                val list = conversations
+                when {
+                    list == null -> Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                    list.isEmpty() -> Text("No Claude Code conversations in this vault yet.")
+                    else -> LazyColumn {
+                        items(list, key = { it.id }) { c ->
+                            ListItem(
+                                modifier = Modifier.clickable {
+                                    claudeSession = c.id
+                                    claudeTitle = c.title
+                                    mode = InputMode.CLAUDE
+                                    entries += Entry.Note("Continuing \"${c.title}\"")
+                                    showConversations = false
+                                },
+                                headlineContent = { Text(c.title, maxLines = 2) },
+                                supportingContent = {
+                                    Text(android.text.format.DateUtils.getRelativeTimeSpanString(c.modified * 1000).toString(), fontSize = 12.sp)
+                                },
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showConversations = false }) { Text("Close") } },
         )
     }
 

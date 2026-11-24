@@ -18,8 +18,10 @@ enum CommandResponder {
         let sshHost: String
         let user: String
         let remoteLogin: Bool
+        /// The Obsidian vault open on this Mac, where the phone's Claude Code mode works.
+        let vault: String?
         enum CodingKeys: String, CodingKey {
-            case home, actions, user
+            case home, actions, user, vault
             case terminalEnabled = "terminal_enabled"
             case sshHost = "ssh_host"
             case remoteLogin = "remote_login"
@@ -51,7 +53,7 @@ enum CommandResponder {
             case "commands":
                 let catalog = Catalog(terminalEnabled: terminalEnabled, home: NSHomeDirectory(), actions: actions,
                                       sshHost: tailnetName() ?? ProcessInfo.processInfo.hostName,
-                                      user: NSUserName(), remoteLogin: sshdListening())
+                                      user: NSUserName(), remoteLogin: sshdListening(), vault: obsidianVault())
                 try await apiClient.respondFS(config, requestID: requestID, status: 200, contentType: "application/json", body: JSONEncoder().encode(catalog))
             case "complete":
                 guard terminalEnabled else { throw Refusal("the terminal is turned off on this Mac") }
@@ -185,6 +187,22 @@ enum CommandResponder {
                 self.stream.close()
             }
         }
+    }
+
+    // MARK: - Obsidian
+
+    /// The vault Obsidian has open (or used last), from its own vault list.
+    private static func obsidianVault() -> String? {
+        let file = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/obsidian/obsidian.json")
+        guard let data = try? Data(contentsOf: file),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let vaults = (json["vaults"] as? [String: [String: Any]])?.values else { return nil }
+        let sorted = vaults.sorted { a, b in
+            let ao = a["open"] as? Bool ?? false, bo = b["open"] as? Bool ?? false
+            if ao != bo { return ao }
+            return (a["ts"] as? Double ?? 0) > (b["ts"] as? Double ?? 0)
+        }
+        return sorted.first?["path"] as? String
     }
 
     // MARK: - SSH details

@@ -21,7 +21,12 @@ data class CommandCatalog(
     @SerialName("ssh_host") val sshHost: String = "",
     val user: String = "",
     @SerialName("remote_login") val remoteLogin: Boolean = false,
+    val vault: String? = null,
 )
+
+/** A Claude Code conversation in the vault, including those the Obsidian Copilot started. */
+@Serializable
+data class ClaudeConversation(val id: String, val title: String, val modified: Long)
 
 @Serializable
 data class ExecRequest(
