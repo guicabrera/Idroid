@@ -32,6 +32,14 @@ final class AppState: ObservableObject {
     @Published private(set) var saveLocation: SaveLocation
     /// Folders on this Mac that paired devices can browse (ADR-0004).
     @Published private(set) var sharedFolders: [SharedFolder]
+    /// Named commands paired devices may run (ADR-0005).
+    @Published var commandActions: [CommandAction] {
+        didSet { commandStore.saveActions(commandActions) }
+    }
+    /// Lets paired devices run any command and complete paths; off by default.
+    @Published var terminalEnabled: Bool {
+        didSet { commandStore.terminalEnabled = terminalEnabled }
+    }
 
     @Published var section: AppSection = .inbox
     @Published var isAddDevicePresented = false
@@ -60,6 +68,7 @@ final class AppState: ObservableObject {
     private let pairingStore = PairingStore()
     private let saveLocationStore = SaveLocationStore()
     private let sharedFoldersStore = SharedFoldersStore()
+    private let commandStore = CommandStore()
     private let syncController = RelaySyncController()
     private let clipboardSyncController = ClipboardSyncController()
     /// Inbox ids already seen, so only genuinely new arrivals notify.
@@ -75,6 +84,8 @@ final class AppState: ObservableObject {
     init() {
         saveLocation = saveLocationStore.load()
         sharedFolders = sharedFoldersStore.load()
+        commandActions = commandStore.loadActions()
+        terminalEnabled = commandStore.terminalEnabled
         clipboardSyncEnabled = defaults.object(forKey: Keys.clipboardSync) as? Bool ?? true
         clipboardSyncImages = defaults.object(forKey: Keys.clipboardImages) as? Bool ?? true
         notificationsEnabled = defaults.object(forKey: Keys.notifications) as? Bool ?? true
@@ -87,6 +98,15 @@ final class AppState: ObservableObject {
             guard let self, let pairing = self.pairing else { return }
             let folders = self.sharedFolders
             let apiClient = self.apiClient
+            if ["commands", "exec", "complete"].contains(event.op ?? "") {
+                let actions = self.commandActions
+                let terminal = self.terminalEnabled
+                let sender = event.senderID.map(self.deviceName(for:)) ?? "Unknown device"
+                Task.detached {
+                    await CommandResponder.handle(event, actions: actions, terminalEnabled: terminal, deviceName: sender, config: pairing, apiClient: apiClient)
+                }
+                return
+            }
             Task.detached {
                 await FileShareResponder.handle(event, folders: folders, config: pairing, apiClient: apiClient)
             }

@@ -37,6 +37,9 @@ class MainActivity : ComponentActivity() {
     /** The device whose shared folders are being browsed (FileBrowserScreen). */
     private var browsingDevice by mutableStateOf<PeerDevice?>(null)
 
+    /** The Mac whose terminal is open (TerminalScreen, ADR-0005). */
+    private var terminalDevice by mutableStateOf<PeerDevice?>(null)
+
     /** Where the files picked in the open document picker go. */
     private var pendingFileTarget: SendTarget = null
 
@@ -57,7 +60,10 @@ class MainActivity : ComponentActivity() {
 
                 val pairing = uiState.pairing
                 val browsing = browsingDevice
-                if (pairing != null && browsing != null && !addingDevice) {
+                val terminal = terminalDevice
+                if (pairing != null && terminal != null && !addingDevice) {
+                    com.idroid.app.ui.TerminalScreen(device = terminal, pairing = pairing, onBack = { terminalDevice = null })
+                } else if (pairing != null && browsing != null && !addingDevice) {
                     FileBrowserScreen(device = browsing, pairing = pairing, onBack = { browsingDevice = null })
                 } else if (pairing == null || addingDevice) {
                     PairingScreen(
@@ -91,6 +97,7 @@ class MainActivity : ComponentActivity() {
                         onAddDevice = { addingDevice = true },
                         onRemoveDevice = viewModel::removeDevice,
                         onBrowseDevice = { browsingDevice = it },
+                        onOpenTerminal = { terminalDevice = it },
                         onLeave = { viewModel.leave { stopService(Intent(this, RelaySyncService::class.java)) } },
                         onDismissMessages = viewModel::dismissMessages,
                     )

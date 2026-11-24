@@ -110,8 +110,13 @@ func (s *Server) handleFSRequest(w http.ResponseWriter, r *http.Request) {
 	targetID := r.PathValue("device_id")
 	op := r.PathValue("op")
 	isUpload := r.Method == http.MethodPut
-	if isUpload && op != "upload" || !isUpload && op != "list" && op != "content" {
-		http.Error(w, "op must be list, content or upload", http.StatusNotFound)
+	// Remote commands (ADR-0005) reuse the same tunnel: "commands" lists what
+	// the target offers, "exec" and "complete" send a JSON body the target
+	// pulls like an upload. Whether to run anything is the target's call.
+	readOps := map[string]bool{"list": true, "content": true, "commands": true}
+	writeOps := map[string]bool{"upload": true, "exec": true, "complete": true}
+	if isUpload && !writeOps[op] || !isUpload && !readOps[op] {
+		http.Error(w, "op must be list, content, commands, upload, exec or complete", http.StatusNotFound)
 		return
 	}
 	if targetID == caller.ID || !s.devices.SameGroup(caller.ID, targetID) {
@@ -191,7 +196,15 @@ wait:
 		w.Header().Set("Content-Length", strconv.FormatInt(reply.r.ContentLength, 10))
 	}
 	w.WriteHeader(status)
-	n, err := io.Copy(w, reply.r.Body)
+	var n int64
+
+	if op == "exec" {
+		// Command output is shown as it is produced: flush every chunk
+		// instead of letting the response buffer hold it back.
+		n, err = copyFlushing(w, reply.r.Body)
+	} else {
+		n, err = io.Copy(w, reply.r.Body)
+	}
 	if err != nil {
 		log.Printf("fs %s %s -> %s: status %d, copy failed after %d bytes: %v", op, caller.ID, targetID, status, n, err)
 	} else {
@@ -235,5 +248,29 @@ func (s *Server) handleFSPull(w http.ResponseWriter, r *http.Request) {
 	}
 	if n, err := io.Copy(w, upload.Body); err != nil {
 		log.Printf("fs upload pull %s: copy failed after %d bytes: %v", responder.ID, n, err)
+	}
+}
+
+// copyFlushing copies src to w, flushing after every read so a slow, chatty
+// stream (a running command's output) reaches the caller without delay.
+func copyFlushing(w http.ResponseWriter, src io.Reader) (int64, error) {
+	rc := http.NewResponseController(w)
+	buf := make([]byte, 32*1024)
+	var total int64
+	for {
+		n, err := src.Read(buf)
+		if n > 0 {
+			if _, werr := w.Write(buf[:n]); werr != nil {
+				return total, werr
+			}
+			total += int64(n)
+			_ = rc.Flush()
+		}
+		if err == io.EOF {
+			return total, nil
+		}
+		if err != nil {
+			return total, err
+		}
 	}
 }

@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.BatteryAlert
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
@@ -108,6 +109,7 @@ fun HomeScreen(
     onAddDevice: () -> Unit,
     onRemoveDevice: (PeerDevice) -> Unit,
     onBrowseDevice: (PeerDevice) -> Unit,
+    onOpenTerminal: (PeerDevice) -> Unit,
     onLeave: () -> Unit,
     onDismissMessages: () -> Unit,
 ) {
@@ -189,7 +191,7 @@ fun HomeScreen(
 
             item { SectionHeader("Devices", null) }
             items(uiState.devices, key = { it.id }) { device ->
-                DeviceRow(device, onBrowse = { onBrowseDevice(device) }, onRemove = { onRemoveDevice(device) })
+                DeviceRow(device, onBrowse = { onBrowseDevice(device) }, onTerminal = { onOpenTerminal(device) }, onRemove = { onRemoveDevice(device) })
             }
             item {
                 OutlinedButton(onClick = onAddDevice, modifier = Modifier.fillMaxWidth()) {
@@ -439,7 +441,7 @@ private fun ItemMeta.icon(): ImageVector = when {
 }
 
 @Composable
-private fun DeviceRow(device: PeerDevice, onBrowse: () -> Unit, onRemove: () -> Unit) {
+private fun DeviceRow(device: PeerDevice, onBrowse: () -> Unit, onTerminal: () -> Unit, onRemove: () -> Unit) {
     var confirm by remember { mutableStateOf(false) }
     Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), colors = idroidCardColors()) {
         Row(
@@ -460,6 +462,9 @@ private fun DeviceRow(device: PeerDevice, onBrowse: () -> Unit, onRemove: () -> 
             }
             IconButton(onClick = onBrowse, enabled = device.online) {
                 Icon(Icons.Filled.FolderOpen, contentDescription = "Browse files on ${device.name}")
+            }
+            IconButton(onClick = onTerminal, enabled = device.online) {
+                Icon(Icons.Filled.Terminal, contentDescription = "Terminal on ${device.name}")
             }
             IconButton(onClick = { confirm = true }) { Icon(Icons.Filled.Delete, contentDescription = "Remove ${device.name}") }
         }

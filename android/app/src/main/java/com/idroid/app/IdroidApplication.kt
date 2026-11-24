@@ -24,6 +24,7 @@ class IdroidApplication : Application() {
     val clipboardSettings: ClipboardSettings by lazy { ClipboardSettings(this) }
     val clipboardSyncState = ClipboardSyncState()
     val sharedFoldersRepository: SharedFoldersRepository by lazy { SharedFoldersRepository(this) }
+    val aiSettingsRepository: com.idroid.app.data.AiSettingsRepository by lazy { com.idroid.app.data.AiSettingsRepository(this) }
     val fileShareResponder: FileShareResponder by lazy { FileShareResponder(this, sharedFoldersRepository, relayApiClient) }
 
     /** Process-wide scope for fire-and-forget uploads that must outlive a short-lived activity. */

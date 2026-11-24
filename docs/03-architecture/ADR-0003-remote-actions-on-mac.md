@@ -9,7 +9,7 @@ decision_date:
 status: proposed
 deciders: [Guilherme Cabrera]
 supersedes:
-superseded_by:
+superseded_by: ADR-0005 (in part)
 ---
 
 # ADR-0003: Remote actions on the Mac triggered from Android

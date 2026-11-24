@@ -26,6 +26,9 @@ import java.io.IOException
 import java.io.OutputStream
 import java.util.concurrent.TimeUnit
 
+/** Starts the trailer the Mac appends after a command's output: {"exit":N,"cwd":"..."}. */
+private const val TRAILER_MARK = "\n\u001E"
+
 class RelayException(message: String, val httpCode: Int? = null) : IOException(message)
 
 data class DownloadResult(val contentType: String, val filename: String?)
@@ -251,6 +254,75 @@ class RelayApiClient {
             .build()
         return Request.Builder().url(url).header("Authorization", "Bearer ${config.deviceToken}")
     }
+
+    // --- Remote commands (ADR-0005) ---
+
+    /** What the Mac lets this phone run: named actions, and whether the free terminal is on. */
+    suspend fun commandCatalog(config: PairingConfig, deviceId: String): CommandCatalog {
+        val body = executeForString(fsRequest(config, deviceId, "commands", "/").get().build())
+        return json.decodeFromString(body)
+    }
+
+    /** Commands or paths completing the last word of [line] (terminal must be on). */
+    suspend fun completeCommand(config: PairingConfig, deviceId: String, line: String, cwd: String?): List<String> {
+        val payload = json.encodeToString(CompleteRequest.serializer(), CompleteRequest(line, cwd))
+        val request = fsRequest(config, deviceId, "complete", "/")
+            .put(payload.toRequestBody("application/json".toMediaTypeOrNull()))
+            .build()
+        return json.decodeFromString<CompleteResponse>(executeForString(request)).suggestions
+    }
+
+    /**
+     * Runs a command on the Mac, handing output to [onOutput] as it arrives.
+     * Cancelling the coroutine closes the connection, which makes the Mac stop
+     * the command. Returns the exit code and the folder the shell ended in.
+     */
+    suspend fun execCommand(
+        config: PairingConfig,
+        deviceId: String,
+        exec: ExecRequest,
+        onOutput: (String) -> Unit,
+    ): ExecResult = withContext(Dispatchers.IO) {
+        val payload = json.encodeToString(ExecRequest.serializer(), exec)
+        val request = fsRequest(config, deviceId, "exec", "/")
+            .put(payload.toRequestBody("application/json".toMediaTypeOrNull()))
+            .build()
+        val call = streamingClient.newCall(request)
+        val job = coroutineContext[kotlinx.coroutines.Job]
+        val cancel = job?.invokeOnCompletion { if (it != null) call.cancel() }
+        try {
+            call.execute().use { response ->
+                if (!response.isSuccessful) {
+                    val message = response.body?.string()?.trim().orEmpty()
+                    throw RelayException(message.ifEmpty { "command failed (${response.code})" }, response.code)
+                }
+                val reader = (response.body ?: throw RelayException("empty response body")).charStream()
+                val buffer = CharArray(8 * 1024)
+                val tail = StringBuilder()
+                while (true) {
+                    ensureActive()
+                    val n = reader.read(buffer)
+                    if (n < 0) break
+                    tail.append(buffer, 0, n)
+                    // Hold back from a record separator on: it may be the trailer.
+                    val sep = tail.indexOf(TRAILER_MARK)
+                    val emitUpTo = if (sep >= 0) sep else tail.length
+                    if (emitUpTo > 0) {
+                        onOutput(tail.substring(0, emitUpTo))
+                        tail.delete(0, emitUpTo)
+                    }
+                }
+                val trailer = tail.toString().removePrefix(TRAILER_MARK).trim()
+                runCatching { json.decodeFromString<ExecResult>(trailer) }
+                    .getOrElse { if (trailer.isNotEmpty()) onOutput(trailer); ExecResult(exit = -1, cwd = exec.cwd ?: "") }
+            }
+        } finally {
+            cancel?.dispose()
+        }
+    }
+
+    /** Commands can run for minutes and stay quiet: no read deadline. */
+    private val streamingClient by lazy { httpClient.newBuilder().readTimeout(0, TimeUnit.SECONDS).build() }
 
     fun openWebSocket(config: PairingConfig, listener: WebSocketListener): WebSocket {
         val wsUrl = toWebSocketUrl(config.relayBaseUrl) + "/ws?token=" + config.deviceToken

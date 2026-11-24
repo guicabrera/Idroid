@@ -267,6 +267,34 @@ final class RelayAPIClient {
         try Self.validate(response)
     }
 
+    /// Reads the body a caller sent with a PUT fs request (exec/complete JSON,
+    /// see ADR-0005); the relay hands it over once.
+    func pullFS(_ config: PairingConfig, requestID: String) async throws -> Data {
+        try await execute(authedRequest(config, path: "/fs/pull/\(requestID)"), allowEmptyBody: true)
+    }
+
+    /// Answers an fs_request with a body produced while the request is open
+    /// (a running command's output). Uses its own session: a quiet command
+    /// must not trip the 30 s idle timeout of the shared one.
+    func respondFS(_ config: PairingConfig, requestID: String, contentType: String, stream: InputStream) async throws {
+        var request = fsResponse(config, requestID: requestID, status: 200, contentType: contentType)
+        request.httpBodyStream = stream
+        let response: URLResponse
+        do {
+            (_, response) = try await streamingSession.data(for: request)
+        } catch {
+            throw RelayError.network(error.localizedDescription)
+        }
+        try Self.validate(response)
+    }
+
+    private lazy var streamingSession: URLSession = {
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = 3600
+        configuration.timeoutIntervalForResource = 3600
+        return URLSession(configuration: configuration)
+    }()
+
     private func fsRequest(_ config: PairingConfig, deviceID: String, op: String, path: String) -> URLRequest {
         let base = config.relayBaseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         var components = URLComponents(string: base + "/fs/\(deviceID)/\(op)")!

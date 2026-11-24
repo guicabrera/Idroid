@@ -12,6 +12,8 @@ struct SettingsView: View {
                 .tabItem { Label("Files", systemImage: "folder") }
             SharingSettings()
                 .tabItem { Label("Sharing", systemImage: "folder.badge.person.crop") }
+            CommandSettings()
+                .tabItem { Label("Commands", systemImage: "terminal") }
             AccountSettings()
                 .tabItem { Label("Account", systemImage: "person.crop.circle") }
         }
@@ -124,5 +126,88 @@ private struct AccountSettings: View {
         } message: {
             Text("You'll need to pair it again to keep sharing.")
         }
+    }
+}
+
+/// What paired devices may run on this Mac (ADR-0005).
+private struct CommandSettings: View {
+    @EnvironmentObject var appState: AppState
+    @State private var editing: CommandAction?
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Allow terminal from paired devices", isOn: $appState.terminalEnabled)
+            } footer: {
+                Text("When on, your paired phone can run any command as you, with autocomplete of commands and file names. Leave it off to allow only the commands below. Every run is logged to ~/Library/Logs/Idroid/commands.log.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section("Commands") {
+                ForEach(appState.commandActions) { action in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(action.name)
+                            Text(action.command)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                        Spacer()
+                        Text(action.group).font(.caption).foregroundStyle(.secondary)
+                        Button { editing = action } label: { Image(systemName: "pencil") }
+                            .buttonStyle(.borderless)
+                        Button {
+                            appState.commandActions.removeAll { $0.id == action.id }
+                        } label: { Image(systemName: "minus.circle") }
+                            .buttonStyle(.borderless)
+                    }
+                }
+                HStack {
+                    Button("Add Command…") {
+                        editing = CommandAction(id: UUID().uuidString, name: "", command: "", takesInput: false, group: "Mac")
+                    }
+                    Button("Restore Defaults") { appState.commandActions = CommandStore.presets }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .sheet(item: $editing) { action in
+            CommandEditor(action: action) { saved in
+                if let i = appState.commandActions.firstIndex(where: { $0.id == saved.id }) {
+                    appState.commandActions[i] = saved
+                } else {
+                    appState.commandActions.append(saved)
+                }
+                editing = nil
+            } onCancel: { editing = nil }
+        }
+    }
+}
+
+private struct CommandEditor: View {
+    @State var action: CommandAction
+    let onSave: (CommandAction) -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        Form {
+            TextField("Name", text: $action.name)
+            TextField("Group", text: $action.group)
+            TextField("Command (zsh)", text: $action.command, axis: .vertical)
+                .font(.body.monospaced())
+                .lineLimit(2...6)
+            Toggle("Asks for input on the phone (available as \"$1\")", isOn: $action.takesInput)
+            HStack {
+                Spacer()
+                Button("Cancel", action: onCancel)
+                Button("Save") { onSave(action) }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(action.name.isEmpty || action.command.isEmpty)
+            }
+        }
+        .formStyle(.grouped)
+        .frame(width: 440)
     }
 }
