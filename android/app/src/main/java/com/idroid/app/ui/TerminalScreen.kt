@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.AlertDialog
@@ -103,7 +104,10 @@ private sealed interface Entry {
         var exit by mutableStateOf<Int?>(null)
         var error by mutableStateOf<String?>(null)
     }
-    class Ai(val text: String) : Entry
+    class Ai(text: String, pending: Boolean = false) : Entry {
+        var text by mutableStateOf(text)
+        var pending by mutableStateOf(pending)
+    }
     class Proposal(val call: ToolCall) : Entry {
         var command by mutableStateOf(call.command)
         var decision by mutableStateOf<Boolean?>(null)
@@ -111,6 +115,12 @@ private sealed interface Entry {
     }
     class Note(val text: String) : Entry
 }
+
+/** What the text box sends: a shell command, a message to the AI agent, or to Claude Code on the Mac. */
+private enum class InputMode { SHELL, AI, CLAUDE }
+
+/** Claude Code session ids are UUIDs; anything else is never put on a command line. */
+private val SESSION_ID = Regex("^[0-9a-fA-F-]{8,64}$")
 
 /** How much output goes back to the model per command. */
 private const val MAX_TOOL_OUTPUT = 8_000
@@ -134,7 +144,10 @@ fun TerminalScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Uni
     val entries = remember { mutableStateListOf<Entry>() }
     val history = remember { mutableStateListOf<String>() }
     var input by remember { mutableStateOf("") }
-    var aiMode by remember { mutableStateOf(false) }
+    var mode by remember { mutableStateOf(InputMode.SHELL) }
+    val aiMode = mode != InputMode.SHELL
+    /** The Claude Code conversation being continued (claude --resume), if any. */
+    var claudeSession by remember { mutableStateOf<String?>(null) }
     var suggestions by remember { mutableStateOf(emptyList<String>()) }
     var running by remember { mutableStateOf<Job?>(null) }
     var tab by remember { mutableStateOf(0) }
@@ -179,8 +192,49 @@ fun TerminalScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Uni
         running = scope.launch { exec(ExecRequest(command = command), command); running = null }
     }
 
+    /**
+     * One turn with Claude Code on the Mac (`claude -p`, in the current
+     * folder). The session id from each reply is resumed on the next one, so
+     * follow-ups are a conversation, not fresh one-off prompts.
+     */
+    fun askClaude(prompt: String) {
+        entries += Entry.Note("› $prompt")
+        val reply = Entry.Ai("", pending = true)
+        entries += reply
+        val resume = claudeSession?.takeIf { SESSION_ID.matches(it) }?.let { " --resume $it" }.orEmpty()
+        running = scope.launch {
+            try {
+                val out = StringBuilder()
+                val result = api.execCommand(
+                    pairing, device.id,
+                    ExecRequest(command = "claude -p --output-format json$resume \"\$1\"", input = prompt, cwd = cwd),
+                ) { out.append(it) }
+                val jsonLine = out.lines().lastOrNull { it.trimStart().startsWith("{") }
+                val obj = jsonLine?.let { runCatching { kotlinx.serialization.json.Json.parseToJsonElement(it) as? kotlinx.serialization.json.JsonObject }.getOrNull() }
+                fun field(key: String) = (obj?.get(key) as? kotlinx.serialization.json.JsonPrimitive)?.content
+                field("session_id")?.let { claudeSession = it }
+                reply.text = field("result") ?: out.toString().trim().ifEmpty { "Claude Code exited with ${result.exit}" }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                reply.text = "Stopped."
+                throw e
+            } catch (e: Exception) {
+                reply.text = "Claude Code error: ${e.message}"
+            } finally {
+                reply.pending = false
+                running = null
+            }
+        }
+    }
+
     fun runAction(action: CommandAction, value: String?) {
         tab = 0
+        // The Claude Code command starts a conversation: keep talking to it in Claude mode.
+        if (action.id == "claude" && !value.isNullOrBlank()) {
+            mode = InputMode.CLAUDE
+            claudeSession = null
+            askClaude(value)
+            return
+        }
         running = scope.launch {
             exec(ExecRequest(actionId = action.id, input = value), action.name + (value?.let { " · $it" } ?: ""))
             running = null
@@ -223,7 +277,11 @@ fun TerminalScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Uni
         if (text.isEmpty() || running != null) return
         input = ""
         suggestions = emptyList()
-        if (aiMode) askAgent(text) else runShell(text)
+        when (mode) {
+            InputMode.SHELL -> runShell(text)
+            InputMode.AI -> askAgent(text)
+            InputMode.CLAUDE -> askClaude(text)
+        }
     }
 
     // Autocomplete: history first, then the Mac's own completion of the last word.
@@ -294,7 +352,14 @@ fun TerminalScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Uni
                 items(entries) { entry ->
                     when (entry) {
                         is Entry.Run -> RunBlock(entry)
-                        is Entry.Ai -> Text(entry.text, style = MaterialTheme.typography.bodyMedium)
+                        is Entry.Ai -> if (entry.pending) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                                Text("Claude Code is working…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        } else {
+                            SelectionContainer { Text(entry.text, style = MaterialTheme.typography.bodyMedium) }
+                        }
                         is Entry.Note -> Text(entry.text, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                         is Entry.Proposal -> ProposalCard(entry)
                     }
@@ -310,19 +375,33 @@ fun TerminalScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Uni
                     }
                 }
             }
+            if (mode == InputMode.CLAUDE) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        if (claudeSession == null) "Claude Code · new conversation in $cwd" else "Claude Code · continuing the conversation",
+                        style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (claudeSession != null) TextButton(onClick = { claudeSession = null }) { Text("New chat") }
+                }
+            }
             Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                // Tapping cycles: shell → AI agent → Claude Code.
                 FilterChip(
                     selected = aiMode,
-                    onClick = { aiMode = !aiMode },
-                    label = { Text(if (aiMode) "AI" else "$") },
-                    leadingIcon = { Icon(if (aiMode) Icons.Filled.AutoAwesome else Icons.Filled.Terminal, null, Modifier.size(18.dp)) },
+                    onClick = { mode = InputMode.entries[(mode.ordinal + 1) % InputMode.entries.size] },
+                    label = { Text(when (mode) { InputMode.SHELL -> "$"; InputMode.AI -> "AI"; InputMode.CLAUDE -> "Claude" }) },
+                    leadingIcon = {
+                        Icon(when (mode) { InputMode.SHELL -> Icons.Filled.Terminal; InputMode.AI -> Icons.Filled.AutoAwesome; InputMode.CLAUDE -> Icons.Filled.SmartToy },
+                            null, Modifier.size(18.dp))
+                    },
                 )
                 Spacer(Modifier.width(8.dp))
                 OutlinedTextField(
                     value = input,
                     onValueChange = { input = it },
                     modifier = Modifier.weight(1f),
-                    placeholder = { Text(if (aiMode) "Ask ${aiSettings.provider.label}…" else "command") },
+                    placeholder = { Text(when (mode) { InputMode.SHELL -> "command"; InputMode.AI -> "Ask ${aiSettings.provider.label}…"; InputMode.CLAUDE -> "Message Claude Code…" }) },
                     textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = if (aiMode) FontFamily.Default else FontFamily.Monospace),
                     singleLine = !aiMode,
                     maxLines = 4,
