@@ -139,7 +139,7 @@ private struct CommandSettings: View {
             Section {
                 Toggle("Allow terminal from paired devices", isOn: $appState.terminalEnabled)
             } footer: {
-                Text("When on, your paired phone can run any command as you, with autocomplete of commands and file names. Leave it off to allow only the commands below. Every run is logged to ~/Library/Logs/Idroid/commands.log.")
+                Text("On by default: your paired phone can run any command as you, with autocomplete, and open an SSH terminal (needs Remote Login in System Settings → General → Sharing). Turn it off to allow only the commands below. Every run is logged to ~/Library/Logs/Idroid/commands.log.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

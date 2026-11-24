@@ -76,4 +76,8 @@ dependencies {
     implementation(libs.play.services.code.scanner)
     // The scanner pulls in a pre-1.3 Fragment, which breaks the ActivityResult APIs.
     implementation(libs.androidx.fragment)
+    // SSH terminal (ADR-0005): Termux's VT emulator and renderer, JSch for the connection.
+    implementation(libs.termux.terminal.emulator)
+    implementation(libs.termux.terminal.view)
+    implementation(libs.jsch)
 }

@@ -18,6 +18,9 @@ data class CommandCatalog(
     @SerialName("terminal_enabled") val terminalEnabled: Boolean = false,
     val home: String = "~",
     val actions: List<CommandAction> = emptyList(),
+    @SerialName("ssh_host") val sshHost: String = "",
+    val user: String = "",
+    @SerialName("remote_login") val remoteLogin: Boolean = false,
 )
 
 @Serializable

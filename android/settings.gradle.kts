@@ -11,6 +11,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // Termux's terminal emulator (SSH terminal, ADR-0005) is only published there.
+        maven("https://jitpack.io") { content { includeGroup("com.github.termux.termux-app") } }
     }
 }
 

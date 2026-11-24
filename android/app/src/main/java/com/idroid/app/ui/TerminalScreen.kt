@@ -29,6 +29,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
@@ -39,6 +40,10 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -75,7 +80,9 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.idroid.app.IdroidApplication
+import com.idroid.app.data.AiModel
 import com.idroid.app.data.AiProvider
+import com.idroid.app.data.listModels
 import com.idroid.app.data.AiSettings
 import com.idroid.app.data.CommandAction
 import com.idroid.app.data.CommandCatalog
@@ -135,6 +142,7 @@ fun TerminalScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Uni
     var showAiSettings by remember { mutableStateOf(false) }
     var agent by remember { mutableStateOf<TerminalAgent?>(null) }
     var askInput by remember { mutableStateOf<CommandAction?>(null) }
+    var sshOpen by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
     suspend fun loadCatalog() {
@@ -231,6 +239,12 @@ fun TerminalScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Uni
             .filter { it.trimEnd() != input.trimEnd() }.distinct().take(25)
     }
 
+    val loaded = catalog
+    if (sshOpen && loaded != null) {
+        SshScreen(device, pairing, loaded, onBack = { sshOpen = false })
+        return
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -243,6 +257,7 @@ fun TerminalScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Uni
                 },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 actions = {
+                    IconButton(onClick = { sshOpen = true }, enabled = catalog != null) { Icon(Icons.Filled.Computer, "SSH terminal (interactive)") }
                     IconButton(onClick = { scope.launch { loadCatalog() } }) { Icon(Icons.Filled.Refresh, "Reload commands") }
                     IconButton(onClick = { showAiSettings = true }) { Icon(Icons.Filled.Settings, "AI settings") }
                 },
@@ -256,7 +271,7 @@ fun TerminalScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Uni
             }
             catalogError?.let { Banner("Couldn't load commands: $it") }
             if (catalog?.terminalEnabled == false) {
-                Banner("The terminal is off on ${device.name}. Only its named commands run. Turn it on in Idroid → Settings → Commands on the Mac.")
+                Banner("The terminal is turned off on ${device.name} (Idroid → Settings → Commands on the Mac). Only its named commands run.")
             }
             if (tab == 1) {
                 CommandList(catalog, onRun = { action -> if (action.takesInput) askInput = action else runAction(action, null) })
@@ -440,6 +455,27 @@ private fun AiSettingsDialog(
     onSave: (AiSettings) -> Unit,
 ) {
     var s by remember { mutableStateOf(initial) }
+    var models by remember { mutableStateOf<List<AiModel>?>(null) }
+    var loading by remember { mutableStateOf(false) }
+    var loadError by remember { mutableStateOf<String?>(null) }
+    var menuOpen by remember { mutableStateOf(false) }
+
+    // Fetch the provider's models whenever the key or provider changes (debounced while typing).
+    LaunchedEffect(s.provider, s.apiKey) {
+        models = null
+        loadError = null
+        if (s.apiKey.isBlank()) return@LaunchedEffect
+        delay(600)
+        loading = true
+        runCatching { listModels(s.provider, s.apiKey.trim()) }
+            .onSuccess { list ->
+                models = list
+                if (list.isEmpty()) loadError = "No usable models for this key"
+            }
+            .onFailure { loadError = it.message ?: "Couldn't list models" }
+        loading = false
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("AI assistant") },
@@ -454,11 +490,39 @@ private fun AiSettingsDialog(
                         ) { Text(provider.label, fontSize = 12.sp) }
                     }
                 }
-                OutlinedTextField(s.model, { s = s.copy(model = it) }, label = { Text("Model") }, singleLine = true)
                 OutlinedTextField(
                     s.apiKey, { s = s.copy(apiKey = it) }, label = { Text("API key") }, singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                 )
+                ExposedDropdownMenuBox(expanded = menuOpen, onExpandedChange = { if (models != null) menuOpen = it }) {
+                    OutlinedTextField(
+                        value = models?.firstOrNull { it.id == s.model }?.label ?: s.model,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Model") },
+                        placeholder = { Text(if (s.apiKey.isBlank()) "Paste the key first" else "Choose a model") },
+                        trailingIcon = {
+                            if (loading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            else ExposedDropdownMenuDefaults.TrailingIcon(menuOpen)
+                        },
+                        supportingText = loadError?.let { { Text(it, color = MaterialTheme.colorScheme.error) } },
+                        modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+                    )
+                    ExposedDropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        models.orEmpty().forEach { m ->
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text(m.label)
+                                        if (m.label != m.id) Text(m.id, fontSize = 11.sp, fontFamily = FontFamily.Monospace,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                },
+                                onClick = { s = s.copy(model = m.id); menuOpen = false },
+                            )
+                        }
+                    }
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("Run commands without asking")
@@ -471,7 +535,7 @@ private fun AiSettingsDialog(
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         },
-        confirmButton = { Button(onClick = { onSave(s) }) { Text("Save") } },
+        confirmButton = { Button(onClick = { onSave(s) }, enabled = s.apiKey.isNotBlank() && s.model.isNotBlank()) { Text("Save") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }

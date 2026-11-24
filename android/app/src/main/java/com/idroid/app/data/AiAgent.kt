@@ -28,20 +28,63 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
-enum class AiProvider(val label: String, val defaultModel: String) {
-    ANTHROPIC("Anthropic", "claude-opus-5-5"),
-    OPENAI("OpenAI", "gpt-5"),
-    GOOGLE("Google", "gemini-2.5-pro"),
+/** The model is never assumed: it's picked from the provider's live list (see [listModels]). */
+enum class AiProvider(val label: String) {
+    ANTHROPIC("Anthropic"),
+    OPENAI("OpenAI"),
+    GOOGLE("Google"),
+}
+
+data class AiModel(val id: String, val label: String)
+
+/** Asks the provider which models this key can use, newest first where the API says so. */
+suspend fun listModels(provider: AiProvider, apiKey: String): List<AiModel> = withContext(Dispatchers.IO) {
+    val http = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build()
+    val json = Json { ignoreUnknownKeys = true }
+    val request = when (provider) {
+        AiProvider.ANTHROPIC -> Request.Builder().url("https://api.anthropic.com/v1/models?limit=100")
+            .header("x-api-key", apiKey).header("anthropic-version", "2023-06-01")
+        AiProvider.OPENAI -> Request.Builder().url("https://api.openai.com/v1/models")
+            .header("Authorization", "Bearer $apiKey")
+        AiProvider.GOOGLE -> Request.Builder().url("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200")
+            .header("x-goog-api-key", apiKey)
+    }.get().build()
+    val body = http.newCall(request).execute().use { response ->
+        val text = response.body?.string().orEmpty()
+        if (!response.isSuccessful) throw IOException("${provider.label} ${response.code}: ${text.take(200)}")
+        json.parseToJsonElement(text).jsonObject
+    }
+    fun JsonElement.s(key: String) = (jsonObject[key] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull
+    when (provider) {
+        AiProvider.ANTHROPIC -> body["data"]?.jsonArray.orEmpty().mapNotNull { m ->
+            val id = m.s("id") ?: return@mapNotNull null
+            AiModel(id, m.s("display_name") ?: id)
+        }
+        AiProvider.OPENAI -> {
+            // The list mixes in embeddings, audio, images…: keep chat models that can call tools.
+            val skip = listOf("audio", "realtime", "tts", "transcribe", "image", "embedding", "search", "moderation", "whisper", "dall-e", "davinci", "babbage", "instruct")
+            body["data"]?.jsonArray.orEmpty()
+                .filter { m -> val id = m.s("id").orEmpty(); (id.startsWith("gpt-") || id.matches(Regex("^o\\d.*"))) && skip.none { id.contains(it) } }
+                .sortedByDescending { (it.jsonObject["created"] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull?.toLongOrNull() ?: 0 }
+                .map { m -> AiModel(m.s("id")!!, m.s("id")!!) }
+        }
+        AiProvider.GOOGLE -> body["models"]?.jsonArray.orEmpty()
+            .filter { m -> m.jsonObject["supportedGenerationMethods"]?.jsonArray.orEmpty().any { (it as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull == "generateContent" } }
+            .mapNotNull { m ->
+                val id = m.s("name")?.removePrefix("models/") ?: return@mapNotNull null
+                if (!id.startsWith("gemini")) null else AiModel(id, m.s("displayName") ?: id)
+            }
+    }
 }
 
 data class AiSettings(
     val provider: AiProvider = AiProvider.ANTHROPIC,
-    val model: String = provider.defaultModel,
+    val model: String = "",
     val apiKey: String = "",
     /** Runs the agent's commands without asking. Off by default. */
     val autoRun: Boolean = false,
 ) {
-    val configured get() = apiKey.isNotBlank()
+    val configured get() = apiKey.isNotBlank() && model.isNotBlank()
 }
 
 /** API keys are credentials: kept in EncryptedSharedPreferences like the pairing token. */
@@ -58,7 +101,7 @@ class AiSettingsRepository(context: Context) {
         val provider = runCatching { AiProvider.valueOf(prefs.getString("provider", null)!!) }.getOrDefault(AiProvider.ANTHROPIC)
         return AiSettings(
             provider = provider,
-            model = prefs.getString("model.${provider.name}", null) ?: provider.defaultModel,
+            model = prefs.getString("model.${provider.name}", null).orEmpty(),
             apiKey = prefs.getString("key.${provider.name}", null).orEmpty(),
             autoRun = prefs.getBoolean("autoRun", false),
         )
@@ -66,12 +109,12 @@ class AiSettingsRepository(context: Context) {
 
     /** Model and key are remembered per provider, so switching back keeps them. */
     fun keyFor(provider: AiProvider) = prefs.getString("key.${provider.name}", null).orEmpty()
-    fun modelFor(provider: AiProvider) = prefs.getString("model.${provider.name}", null) ?: provider.defaultModel
+    fun modelFor(provider: AiProvider) = prefs.getString("model.${provider.name}", null).orEmpty()
 
     fun save(settings: AiSettings) {
         prefs.edit()
             .putString("provider", settings.provider.name)
-            .putString("model.${settings.provider.name}", settings.model.trim().ifEmpty { settings.provider.defaultModel })
+            .putString("model.${settings.provider.name}", settings.model.trim())
             .putString("key.${settings.provider.name}", settings.apiKey.trim())
             .putBoolean("autoRun", settings.autoRun)
             .apply()
@@ -190,8 +233,9 @@ class TerminalAgent(private val settings: AiSettings, private val macHome: Strin
             put("model", settings.model)
             put("max_tokens", 16000)
             put("system", system(cwd))
-            // Route policy declines to a fallback model instead of stopping.
-            put("fallbacks", "default")
+            // Route policy declines to a fallback model instead of stopping
+            // (only the models that accept the "default" fallback form).
+            if (FALLBACK_MODELS.any { settings.model.startsWith(it) }) put("fallbacks", "default")
             putJsonArray("tools") {
                 addJsonObject {
                     put("name", "run_command")
@@ -304,6 +348,10 @@ class TerminalAgent(private val settings: AiSettings, private val macHome: Strin
             }
             return json.parseToJsonElement(text).jsonObject
         }
+    }
+
+    private companion object {
+        val FALLBACK_MODELS = listOf("claude-fable-5", "claude-opus-5", "claude-sonnet-5-5")
     }
 
     private fun JsonObject.str(key: String): String? = (this[key] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull

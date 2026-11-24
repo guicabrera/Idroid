@@ -17,8 +17,8 @@ struct CommandAction: Codable, Identifiable, Hashable {
 }
 
 /// Persists remote-command settings in UserDefaults like the other stores.
-/// The free terminal starts off: turning it on is an explicit choice that
-/// lets any paired device run anything this user can.
+/// The free terminal starts on (ADR-0005): paired devices can run anything
+/// this user can; the switch in Settings → Commands turns it off.
 final class CommandStore {
 
     private let defaults = UserDefaults.standard
@@ -26,7 +26,7 @@ final class CommandStore {
     private let terminalKey = "commands.terminalEnabled"
 
     var terminalEnabled: Bool {
-        get { defaults.bool(forKey: terminalKey) }
+        get { defaults.object(forKey: terminalKey) as? Bool ?? true }
         set { defaults.set(newValue, forKey: terminalKey) }
     }
 

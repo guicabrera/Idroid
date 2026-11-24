@@ -6,7 +6,7 @@ tags:
 created: 2026-11-21
 modified: 2026-11-21
 decision_date:
-status: proposed
+status: superseded
 deciders: [Guilherme Cabrera]
 supersedes:
 superseded_by: ADR-0005 (in part)
@@ -14,6 +14,8 @@ superseded_by: ADR-0005 (in part)
 
 # ADR-0003: Remote actions on the Mac triggered from Android
 
+> **Superseded in part by [ADR-0005](./ADR-0005-remote-terminal-and-ai-agent.md):** arbitrary commands are now allowed (free terminal on by default, plus SSH in the app). The named-actions part below still applies.
+>
 > **Summary:** Idroid lets the Android phone trigger a Mac-side allowlist of named actions (built-ins plus user-approved macOS Shortcuts), delivered live over the relay WebSocket with a short expiry; arbitrary shell execution is out of scope and left to Tailscale SSH.
 
 ## Context and problem
@@ -91,3 +93,4 @@ Option 2 is the only one that keeps the token's blast radius bounded while still
 | Date | Status | Notes |
 |------|--------|-------|
 | 2026-11-21 | proposed | Initial draft. |
+| 2026-11-24 | superseded | Free terminal and in-app SSH adopted in ADR-0005. |

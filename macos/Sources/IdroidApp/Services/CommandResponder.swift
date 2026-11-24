@@ -13,9 +13,16 @@ enum CommandResponder {
         let terminalEnabled: Bool
         let home: String
         let actions: [CommandAction]
+        /// For the phone's interactive SSH terminal: this Mac's tailnet name,
+        /// the login user, and whether Remote Login (sshd) is listening.
+        let sshHost: String
+        let user: String
+        let remoteLogin: Bool
         enum CodingKeys: String, CodingKey {
-            case home, actions
+            case home, actions, user
             case terminalEnabled = "terminal_enabled"
+            case sshHost = "ssh_host"
+            case remoteLogin = "remote_login"
         }
     }
 
@@ -42,7 +49,9 @@ enum CommandResponder {
         do {
             switch op {
             case "commands":
-                let catalog = Catalog(terminalEnabled: terminalEnabled, home: NSHomeDirectory(), actions: actions)
+                let catalog = Catalog(terminalEnabled: terminalEnabled, home: NSHomeDirectory(), actions: actions,
+                                      sshHost: tailnetName() ?? ProcessInfo.processInfo.hostName,
+                                      user: NSUserName(), remoteLogin: sshdListening())
                 try await apiClient.respondFS(config, requestID: requestID, status: 200, contentType: "application/json", body: JSONEncoder().encode(catalog))
             case "complete":
                 guard terminalEnabled else { throw Refusal("the terminal is turned off on this Mac") }
@@ -175,6 +184,41 @@ enum CommandResponder {
                 self.closed = true
                 self.stream.close()
             }
+        }
+    }
+
+    // MARK: - SSH details
+
+    /// MagicDNS name from the Tailscale CLI (app or Homebrew), without the trailing dot.
+    private static func tailnetName() -> String? {
+        let candidates = ["/Applications/Tailscale.app/Contents/MacOS/Tailscale", "/opt/homebrew/bin/tailscale", "/usr/local/bin/tailscale"]
+        guard let cli = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else { return nil }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: cli)
+        process.arguments = ["status", "--json"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return nil }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let me = json["Self"] as? [String: Any],
+              let name = me["DNSName"] as? String, !name.isEmpty else { return nil }
+        return name.hasSuffix(".") ? String(name.dropLast()) : name
+    }
+
+    /// Remote Login is on when something accepts connections on port 22.
+    private static func sshdListening() -> Bool {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = in_port_t(22).bigEndian
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+        return withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) == 0 }
         }
     }
 
