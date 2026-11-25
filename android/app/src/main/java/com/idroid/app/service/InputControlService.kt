@@ -74,6 +74,7 @@ class InputControlService : AccessibilityService() {
     override fun onDestroy() {
         instance = null
         socket?.close(1000, null)
+        holdWifi(false)
         hidePointer()
         super.onDestroy()
     }
@@ -83,8 +84,30 @@ class InputControlService : AccessibilityService() {
 
     // --- Connection -------------------------------------------------------------
 
+    /**
+     * The phone's Wi-Fi power save batches packets (RTT swings of 20–500 ms
+     * were measured), which makes the pointer stutter. Hold a low-latency
+     * Wi-Fi lock while the Mac's pipe is open.
+     */
+    private var wifiLock: android.net.wifi.WifiManager.WifiLock? = null
+
+    private fun holdWifi(on: Boolean) {
+        if (on) {
+            if (wifiLock?.isHeld == true) return
+            val wifi = applicationContext.getSystemService(android.net.wifi.WifiManager::class.java)
+            @Suppress("DEPRECATION")
+            val mode = if (android.os.Build.VERSION.SDK_INT >= 29) android.net.wifi.WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+            else android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF
+            wifiLock = wifi.createWifiLock(mode, "idroid:input").apply { setReferenceCounted(false); acquire() }
+        } else {
+            wifiLock?.takeIf { it.isHeld }?.release()
+            wifiLock = null
+        }
+    }
+
     private fun connect(config: PairingConfig, peer: String) {
         socket?.close(1000, null)
+        holdWifi(true)
         peerId = peer
         val app = application as IdroidApplication
         socket = app.relayApiClient.openInputSocket(config, peer, object : WebSocketListener() {
@@ -107,6 +130,7 @@ class InputControlService : AccessibilityService() {
         main.post {
             if (webSocket === socket) {
                 socket = null
+                holdWifi(false)
                 leave()
             }
         }
