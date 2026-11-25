@@ -13,11 +13,8 @@ Kotlin + Jetpack Compose client for [ADR-0001](../docs/03-architecture/ADR-0001-
 - **SSH terminal** ([spec](../docs/06-features/ssh-terminal-spec.md)): interactive shell over Tailscale (Termux emulator + JSch), key installed on the Mac automatically.
 - **Obsidian Copilot** ([spec](../docs/06-features/copilot-on-phone-spec.md)) and **VS Code** ([spec](../docs/06-features/vscode-on-phone-spec.md)) from the Mac, through the Idroid Bridge plugin.
 - **Background sync** ([spec](../docs/06-features/background-sync-spec.md)): the service restarts after being swiped from recents, reboots and updates.
-- **Releases:** `scripts/release-android.sh` ([release guide](../docs/05-deployment/release-guide.md)).
-
-## What's deliberately not here yet
-
 - **QR code pairing** is done: the Mac shows `idroid://pair?relay=…&code=…` as a QR code; the phone scans it with Google's code scanner (no camera permission) or the system camera (deep link, `PairingLink.kt`).
+- **Releases:** `scripts/release-android.sh` ([release guide](../docs/05-deployment/release-guide.md)).
 
 ## Building
 
