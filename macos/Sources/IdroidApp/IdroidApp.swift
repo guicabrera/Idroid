@@ -19,6 +19,14 @@ struct IdroidApp: App {
         }
         .defaultSize(width: 860, height: 560)
 
+        // Terminal / Copilot windows that drive another Mac, like the phone's tabs.
+        WindowGroup("Remote", id: RemoteWindow.id, for: RemoteTarget.self) { $target in
+            RemoteWindowView(target: target)
+                .environmentObject(appState)
+                .tint(.idroidIndigo)
+        }
+        .defaultSize(width: 760, height: 560)
+
         Settings {
             SettingsView()
                 .environmentObject(appState)

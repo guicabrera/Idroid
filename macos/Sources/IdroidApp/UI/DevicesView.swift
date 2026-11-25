@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// This Mac plus every device in its group; add or remove devices here.
@@ -56,6 +57,7 @@ struct DevicesView: View {
 
 private struct DeviceCard: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.openWindow) private var openWindow
     let device: PeerDevice
     let isSelf: Bool
     @State private var confirmRemove = false
@@ -75,6 +77,18 @@ private struct DeviceCard: View {
                         Button("Send Clipboard") { appState.sendClipboard(to: .device(device.id)) }
                         Button("Browse Files") { appState.browse(device) }
                             .disabled(!device.online)
+                        Divider()
+                        Section("Control this device") {
+                            Button("Terminal") { openWindow(id: RemoteWindow.id, value: RemoteTarget(deviceID: device.id, kind: .terminal)) }
+                            Button("Copilot") { openWindow(id: RemoteWindow.id, value: RemoteTarget(deviceID: device.id, kind: .copilot)) }
+                            Button("New Copilot Chat") { openWindow(id: RemoteWindow.id, value: RemoteTarget(deviceID: device.id, kind: .copilotNew)) }
+                            Button("VS Code") { appState.openRemoteVSCode(device) }
+                            Button("VS Code Folder…") {
+                                if let folder = askFolder(device) { appState.openRemoteVSCode(device, folder: folder) }
+                            }
+                            Button("SSH in Terminal") { appState.openRemoteSSH(device) }
+                        }
+                        .disabled(!device.online)
                         Divider()
                         Button("Remove Device…", role: .destructive) { confirmRemove = true }
                     } label: {
@@ -166,4 +180,20 @@ extension ISO8601DateFormatter {
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter
     }()
+}
+
+/// Asks which folder on the other Mac VS Code should open (empty = its vault).
+@MainActor
+private func askFolder(_ device: PeerDevice) -> String? {
+    let alert = NSAlert()
+    alert.messageText = "Open a folder in VS Code on \(device.name)"
+    alert.informativeText = "Full path on that Mac, e.g. /Users/you/Projects/App. Leave empty for its Obsidian vault."
+    let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
+    alert.accessoryView = field
+    alert.addButton(withTitle: "Open")
+    alert.addButton(withTitle: "Cancel")
+    alert.window.initialFirstResponder = field
+    guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+    let path = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    return path.isEmpty ? nil : path
 }

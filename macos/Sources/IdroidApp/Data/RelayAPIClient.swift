@@ -288,14 +288,14 @@ final class RelayAPIClient {
         try Self.validate(response)
     }
 
-    private lazy var streamingSession: URLSession = {
+    lazy var streamingSession: URLSession = {
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = 3600
         configuration.timeoutIntervalForResource = 3600
         return URLSession(configuration: configuration)
     }()
 
-    private func fsRequest(_ config: PairingConfig, deviceID: String, op: String, path: String) -> URLRequest {
+    func fsRequest(_ config: PairingConfig, deviceID: String, op: String, path: String) -> URLRequest {
         let base = config.relayBaseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         var components = URLComponents(string: base + "/fs/\(deviceID)/\(op)")!
         components.queryItems = [URLQueryItem(name: "path", value: path)]
@@ -339,7 +339,7 @@ final class RelayAPIClient {
         return data
     }
 
-    private static func validate(_ response: URLResponse) throws {
+    static func validate(_ response: URLResponse) throws {
         guard let http = response as? HTTPURLResponse else { throw RelayError.invalidResponse }
         guard (200...299).contains(http.statusCode) else { throw RelayError.http(http.statusCode) }
     }
