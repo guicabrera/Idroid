@@ -69,6 +69,11 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
+/** The bridge's JSON answer; anything else (e.g. the Mac has no Idroid Bridge) becomes a readable error. */
+private fun String.jsonLine(): String =
+    lines().lastOrNull { it.startsWith("{") }
+        ?: throw IllegalStateException(trim().take(300).ifEmpty { "No answer from the Idroid Bridge plugin in Obsidian on the Mac" })
+
 /** Ids from the bridge go on a command line only if they look like ids. */
 private val BRIDGE_ID = Regex("^[A-Za-z0-9_-]{1,80}$")
 
@@ -131,7 +136,7 @@ fun CopilotScreen(
             val sid = sessionId?.takeIf { BRIDGE_ID.matches(it) }
             val path = "/state?since=$since&wait=" + (if (since < 0) 0 else 25) +
                 (sid?.let { "&session=$it" } ?: if (newChat) "&session=new" else "")
-            runCatching { json.decodeFromString<CopilotState>(call("GET", path).lines().last { it.startsWith("{") }) }
+            runCatching { json.decodeFromString<CopilotState>(call("GET", path).jsonLine()) }
                 .onSuccess { s ->
                     error = null
                     state = s
@@ -160,7 +165,7 @@ fun CopilotScreen(
         scope.launch {
             runCatching { post("/send", "session" to sessionId, "text" to text) }
                 .onSuccess { r ->
-                    runCatching { json.decodeFromString<Map<String, String>>(r.lines().last { it.startsWith("{") })["session"] }
+                    runCatching { json.decodeFromString<Map<String, String>>(r.jsonLine())["session"] }
                         .getOrNull()?.let { newChat = false; if (it != sessionId) sessionId = it else reload++ }
                 }
                 .onFailure { error = it.message; input = text }
@@ -185,7 +190,7 @@ fun CopilotScreen(
                                     scope.launch {
                                         runCatching { post("/resume", "path" to c.path) }
                                             .onSuccess { r ->
-                                                runCatching { json.decodeFromString<Map<String, String>>(r.lines().last { it.startsWith("{") })["session"] }
+                                                runCatching { json.decodeFromString<Map<String, String>>(r.jsonLine())["session"] }
                                                     .getOrNull()?.let { newChat = false; sessionId = it; reload++ }
                                                 showHistory = false
                                             }
@@ -230,7 +235,7 @@ fun CopilotScreen(
                                     history = null
                                     scope.launch {
                                         history = runCatching {
-                                            json.decodeFromString<com.idroid.app.data.CopilotHistory>(call("GET", "/history").lines().last { it.startsWith("{") }).chats
+                                            json.decodeFromString<com.idroid.app.data.CopilotHistory>(call("GET", "/history").jsonLine()).chats
                                         }.getOrElse { error = it.message; emptyList() }
                                     }
                                 },
