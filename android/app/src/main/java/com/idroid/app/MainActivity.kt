@@ -62,7 +62,7 @@ class MainActivity : ComponentActivity() {
                 val browsing = browsingDevice
                 val terminal = terminalDevice
                 if (pairing != null && terminal != null && !addingDevice) {
-                    com.idroid.app.ui.TerminalScreen(device = terminal, pairing = pairing, onBack = { terminalDevice = null })
+                    com.idroid.app.ui.TerminalTabs(device = terminal, pairing = pairing, onBack = { terminalDevice = null })
                 } else if (pairing != null && browsing != null && !addingDevice) {
                     FileBrowserScreen(device = browsing, pairing = pairing, onBack = { browsingDevice = null })
                 } else if (pairing == null || addingDevice) {

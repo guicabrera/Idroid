@@ -173,8 +173,15 @@ private const val MAX_TOOL_OUTPUT = 8_000
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TerminalScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit) {
-    BackHandler(onBack = onBack)
+fun TerminalScreen(
+    device: PeerDevice,
+    pairing: PairingConfig,
+    onBack: () -> Unit,
+    active: Boolean = true,
+    onOpenSsh: ((CommandCatalog) -> Unit)? = null,
+) {
+    // Several tabs stay composed at once (TerminalTabs): only the visible one handles Back.
+    BackHandler(enabled = active, onBack = onBack)
     val app = LocalContext.current.applicationContext as IdroidApplication
     val api = app.relayApiClient
     val scope = rememberCoroutineScope()
@@ -368,7 +375,7 @@ fun TerminalScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Uni
     }
 
     if (copilotOpen) {
-        CopilotScreen(device, pairing, onBack = { copilotOpen = false })
+        CopilotScreen(device, pairing, onBack = { copilotOpen = false }, active = active)
         return
     }
     val loaded = catalog
@@ -390,7 +397,7 @@ fun TerminalScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Uni
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 actions = {
                     IconButton(onClick = { copilotOpen = true }) { Icon(Icons.Filled.SmartToy, "Obsidian Copilot") }
-                    IconButton(onClick = { sshOpen = true }, enabled = catalog != null) { Icon(Icons.Filled.Computer, "SSH terminal (interactive)") }
+                    IconButton(onClick = { catalog?.let { c -> onOpenSsh?.invoke(c) ?: run { sshOpen = true } } }, enabled = catalog != null) { Icon(Icons.Filled.Computer, "SSH terminal (interactive)") }
                     IconButton(onClick = { scope.launch { loadCatalog() } }) { Icon(Icons.Filled.Refresh, "Reload commands") }
                     IconButton(onClick = { showAiSettings = true }) { Icon(Icons.Filled.Settings, "AI settings") }
                 },

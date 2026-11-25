@@ -83,8 +83,8 @@ private const val HELPER = "\"\$HOME/.idroid/copilot\""
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CopilotScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit) {
-    BackHandler(onBack = onBack)
+fun CopilotScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit, active: Boolean = true) {
+    BackHandler(enabled = active, onBack = onBack)
     val app = LocalContext.current.applicationContext as IdroidApplication
     val api = app.relayApiClient
     val scope = rememberCoroutineScope()

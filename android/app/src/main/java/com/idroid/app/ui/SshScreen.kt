@@ -77,8 +77,8 @@ private sealed interface SshState {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SshScreen(device: PeerDevice, pairing: PairingConfig, catalog: CommandCatalog, onBack: () -> Unit) {
-    BackHandler(onBack = onBack)
+fun SshScreen(device: PeerDevice, pairing: PairingConfig, catalog: CommandCatalog, onBack: () -> Unit, active: Boolean = true) {
+    BackHandler(enabled = active, onBack = onBack)
     val context = LocalContext.current
     val app = context.applicationContext as IdroidApplication
     val scope = rememberCoroutineScope()
@@ -133,6 +133,8 @@ fun SshScreen(device: PeerDevice, pairing: PairingConfig, catalog: CommandCatalo
         }
     }
     DisposableEffect(Unit) { onDispose { session?.close() } }
+    // Coming back to this tab: the keyboard goes to this shell, not a hidden one.
+    LaunchedEffect(active) { if (active && state == SshState.Connected) view.showKeyboard() }
 
     Scaffold(
         topBar = {
