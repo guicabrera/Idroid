@@ -15,8 +15,8 @@ android {
         // ADR-0002 and lets downloads use the modern MediaStore.Downloads API.
         minSdk = 29
         targetSdk = 35
-        versionCode = 20
-        versionName = "0.9.2"
+        versionCode = 21
+        versionName = "0.11.0"
     }
 
     buildTypes {
