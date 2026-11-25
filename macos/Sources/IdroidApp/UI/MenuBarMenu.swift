@@ -18,6 +18,19 @@ struct MenuBarMenu: View {
 
             Divider()
 
+            Menu("Control") {
+                if appState.devices.isEmpty { Text("No devices yet") }
+                ForEach(appState.devices) { device in
+                    Menu("\(device.online ? "●" : "○") \(device.name)") {
+                        Button("Terminal") { openWindow(id: RemoteWindow.id, value: RemoteTarget(deviceID: device.id, kind: .terminal)); NSApp.activate() }
+                        Button("Copilot") { openWindow(id: RemoteWindow.id, value: RemoteTarget(deviceID: device.id, kind: .copilot)); NSApp.activate() }
+                        Button("VS Code") { appState.openRemoteVSCode(device) }
+                        Button("SSH in Terminal") { appState.openRemoteSSH(device) }
+                    }
+                    .disabled(!device.online)
+                }
+            }
+
             targetMenu("Send Files") { appState.pickAndSendFiles(to: $0) }
             targetMenu("Send Clipboard") { appState.sendClipboard(to: $0) }
 

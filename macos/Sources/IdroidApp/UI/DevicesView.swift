@@ -109,6 +109,13 @@ private struct DeviceCard: View {
             }
 
             if !isSelf {
+                HStack(spacing: 6) {
+                    remoteButton("Terminal", "terminal") { openWindow(id: RemoteWindow.id, value: RemoteTarget(deviceID: device.id, kind: .terminal)) }
+                    remoteButton("Copilot", "sparkles") { openWindow(id: RemoteWindow.id, value: RemoteTarget(deviceID: device.id, kind: .copilot)) }
+                    remoteButton("VS Code", "chevron.left.forwardslash.chevron.right") { appState.openRemoteVSCode(device) }
+                    remoteButton("SSH", "network") { appState.openRemoteSSH(device) }
+                }
+                .disabled(!device.online)
                 Button {
                     appState.pickAndSendFiles(to: .device(device.id))
                 } label: {
@@ -137,6 +144,18 @@ private struct DeviceCard: View {
         } message: {
             Text("It stops receiving from and sending to your devices, and has to be paired again to come back.")
         }
+    }
+
+    private func remoteButton(_ title: String, _ symbol: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 3) {
+                Image(systemName: symbol).font(.system(size: 14))
+                Text(title).font(.caption2)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.bordered)
+        .help(title + " on " + device.name)
     }
 
     private var statusText: String {
