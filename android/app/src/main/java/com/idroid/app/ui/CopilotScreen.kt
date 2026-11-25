@@ -25,6 +25,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -57,6 +58,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.idroid.app.IdroidApplication
+import com.idroid.app.data.COPILOT_GLOBAL
 import com.idroid.app.data.CopilotMessage
 import com.idroid.app.data.CopilotPermission
 import com.idroid.app.data.CopilotState
@@ -115,6 +117,9 @@ fun CopilotScreen(
     var history by remember { mutableStateOf<List<com.idroid.app.data.CopilotSavedChat>?>(null) }
     var showHistory by remember { mutableStateOf(false) }
     var resuming by remember { mutableStateOf(false) }
+    // Project picked on the phone (null until the first answer: then the Mac's project).
+    var project by remember { mutableStateOf<String?>(null) }
+    var projectMenuOpen by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
     /** Runs the helper; [body] travels as "$1", never spliced into the command. */
@@ -141,6 +146,7 @@ fun CopilotScreen(
                     error = null
                     state = s
                     since = s.version
+                    if (project == null) project = s.project
                     if (sessionId == null && !newChat) sessionId = s.session?.id
                 }
                 .onFailure {
@@ -163,7 +169,7 @@ fun CopilotScreen(
         input = ""
         sending = true
         scope.launch {
-            runCatching { post("/send", "session" to sessionId, "text" to text) }
+            runCatching { post("/send", "session" to sessionId, "text" to text, "project" to project) }
                 .onSuccess { r ->
                     runCatching { json.decodeFromString<Map<String, String>>(r.jsonLine())["session"] }
                         .getOrNull()?.let { newChat = false; if (it != sessionId) sessionId = it else reload++ }
@@ -218,7 +224,11 @@ fun CopilotScreen(
                     Box {
                         Row(Modifier.padding(end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f, fill = false)) {
-                                Text("Copilot", style = MaterialTheme.typography.titleMedium)
+                                val projectName = when (project) {
+                                    null, COPILOT_GLOBAL -> null
+                                    else -> state?.projects?.firstOrNull { it.id == project }?.name
+                                }
+                                Text(projectName?.let { "Copilot · $it" } ?: "Copilot", style = MaterialTheme.typography.titleMedium, maxLines = 1)
                                 Text(
                                     state?.sessions?.firstOrNull { it.id == sessionId }?.title ?: "New chat",
                                     fontSize = 12.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -235,12 +245,12 @@ fun CopilotScreen(
                                     history = null
                                     scope.launch {
                                         history = runCatching {
-                                            json.decodeFromString<com.idroid.app.data.CopilotHistory>(call("GET", "/history").jsonLine()).chats
+                                            json.decodeFromString<com.idroid.app.data.CopilotHistory>(call("GET", "/history" + (project?.takeIf { BRIDGE_ID.matches(it) }?.let { "?project=$it" } ?: "")).jsonLine()).chats
                                         }.getOrElse { error = it.message; emptyList() }
                                     }
                                 },
                             )
-                            state?.sessions.orEmpty().forEach { s ->
+                            state?.sessions.orEmpty().filter { project == null || it.project == project }.forEach { s ->
                                 DropdownMenuItem(
                                     text = {
                                         Column {
@@ -257,6 +267,29 @@ fun CopilotScreen(
                 },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 actions = {
+                    Box {
+                        IconButton(onClick = { projectMenuOpen = true }) { Icon(Icons.Filled.Folder, "Project") }
+                        DropdownMenu(expanded = projectMenuOpen, onDismissRequest = { projectMenuOpen = false }) {
+                            val pick = { id: String ->
+                                projectMenuOpen = false
+                                if (id != project) {
+                                    project = id
+                                    // A chat belongs to one project: start fresh in the new one.
+                                    newChat = true; sessionId = null; state = state?.copy(session = null); reload++
+                                }
+                            }
+                            DropdownMenuItem(
+                                text = { Text((if (project == COPILOT_GLOBAL) "✓ " else "") + "No project") },
+                                onClick = { pick(COPILOT_GLOBAL) },
+                            )
+                            state?.projects.orEmpty().forEach { p ->
+                                DropdownMenuItem(
+                                    text = { Text((if (project == p.id) "✓ " else "") + p.name, maxLines = 1) },
+                                    onClick = { pick(p.id) },
+                                )
+                            }
+                        }
+                    }
                     IconButton(onClick = { newChat = true; sessionId = null; state = state?.copy(session = null); reload++ }) {
                         Icon(Icons.Filled.Add, "New chat")
                     }

@@ -15,6 +15,8 @@ const DIR = path.join(os.homedir(), ".idroid");
 const INFO = path.join(DIR, "copilot-bridge.json");
 const HELPER = path.join(DIR, "copilot");
 const MAX_MESSAGES = 80;
+/** Copilot's scope id for chats outside any project. */
+const GLOBAL = "__global__";
 /** tailnet HTTPS port the phone opens VS Code on (tailscale serve → the vscode-pane proxy). */
 const VSCODE_TAILNET_PORT = 8445;
 /**
@@ -130,7 +132,10 @@ module.exports = class IdroidBridge extends Plugin {
       if (!id) {
         // A new chat from the phone; Copilot shows it on the Mac too. Existing
         // chats are sent to in place, without switching what the Mac shows.
-        const session = await m.createSession();
+        // In the project the phone picked ("__global__" = no project), without
+        // switching the project the Mac is showing.
+        const project = this.projectId(body.project);
+        const session = await m.createSession(undefined, project === undefined ? m.activeProjectId : project);
         id = session.internalId;
         if (session.ready) await session.ready;
       }
@@ -153,7 +158,7 @@ module.exports = class IdroidBridge extends Plugin {
       return this.json(res, 200, {});
     }
     if (req.method === "GET" && url.pathname === "/history") {
-      return this.json(res, 200, { chats: await this.history() });
+      return this.json(res, 200, { chats: await this.history(url.searchParams.get("project")) });
     }
     if (req.method === "POST" && url.pathname === "/resume") {
       // Reopens a saved agent chat the way the Copilot Navigator does; Copilot
@@ -221,14 +226,46 @@ module.exports = class IdroidBridge extends Plugin {
     }
   }
 
-  /** Saved agent chats (Copilot's history notes), most recently used first. */
-  async history() {
-    const items = await this.app.plugins.plugins.copilot.getChatHistoryItems();
+  /** Copilot's projects (not archived), as the Navigator lists them. */
+  projects(m) {
+    return (m.previousProjectRecords || [])
+      .filter((r) => r && r.project && !r.project.archivedAt)
+      .map((r) => ({ id: r.project.id, name: r.project.name || r.project.id }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  /** A project id from the phone: "__global__", a known project, or undefined. */
+  projectId(id) {
+    if (!id) return undefined;
+    if (id === GLOBAL) return GLOBAL;
+    return this.projects(this.copilot()).some((p) => p.id === id) ? id : undefined;
+  }
+
+  /**
+   * Saved agent chats, most recently used first. Uses the agent manager's own
+   * listing (what the Navigator shows): it reads each chat's frontmatter from
+   * disk and merges the backends' native sessions, so it doesn't depend on
+   * Obsidian's metadata cache being warm (that made the list come and go).
+   * `project` = a project id or "__global__" for chats outside projects;
+   * none = every chat.
+   */
+  async history(project) {
+    const m = this.copilot();
+    const scope = this.projectId(project);
+    let items = await m.getChatHistoryItems(scope === GLOBAL ? undefined : scope);
+    if (scope === GLOBAL) items = items.filter((i) => !i.projectId || i.projectId === GLOBAL);
+    const time = (d) => (d instanceof Date ? d.getTime() : Number(d) || 0);
     return items
-      .filter((i) => i.backendId) // agent chats; Quick Chat history has no backend
-      .map((i) => ({ path: i.id, title: i.title || i.id, lastUsed: new Date(i.lastAccessedAt || i.createdAt || 0).getTime(), backend: i.backendId }))
+      .filter((i) => !i.archivedAt)
+      .map((i) => ({
+        path: i.id,
+        title: i.title || i.id,
+        lastUsed: time(i.lastAccessedAt) || time(i.createdAt),
+        backend: i.backendId || "",
+        project: i.projectId || GLOBAL,
+      }))
       .sort((a, b) => b.lastUsed - a.lastUsed)
-      .slice(0, 100);
+      .slice(0, 200);
   }
 
   state(m, sessionId) {
@@ -238,6 +275,7 @@ module.exports = class IdroidBridge extends Plugin {
       status: s.getStatus(),
       backend: s.backendId,
       active: s.internalId === m.activeSessionId,
+      project: s.projectId || GLOBAL,
     }));
     // "new" = the phone is composing a new chat: no conversation yet.
     const id = sessionId === "new" ? null : sessionId || m.activeSessionId;
@@ -257,7 +295,7 @@ module.exports = class IdroidBridge extends Plugin {
         })),
       };
     }
-    return { version: this.version, sessions, session };
+    return { version: this.version, sessions, session, projects: this.projects(m), project: m.activeProjectId || GLOBAL };
   }
 
   body(req) {

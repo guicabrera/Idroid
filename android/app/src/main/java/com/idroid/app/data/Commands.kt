@@ -48,10 +48,23 @@ data class CompleteResponse(val suggestions: List<String> = emptyList())
 // --- Copilot bridge (ADR-0006): Obsidian Copilot's agent chat, through the Idroid Bridge plugin ---
 
 @Serializable
-data class CopilotState(val version: Int = 0, val sessions: List<CopilotSession> = emptyList(), val session: CopilotChat? = null)
+data class CopilotState(
+    val version: Int = 0,
+    val sessions: List<CopilotSession> = emptyList(),
+    val session: CopilotChat? = null,
+    val projects: List<CopilotProject> = emptyList(),
+    /** The project the Mac's Copilot is in ("__global__" = none). */
+    val project: String = COPILOT_GLOBAL,
+)
+
+/** Copilot's scope id for chats outside any project. */
+const val COPILOT_GLOBAL = "__global__"
 
 @Serializable
-data class CopilotSession(val id: String, val title: String, val status: String, val backend: String = "", val active: Boolean = false)
+data class CopilotProject(val id: String, val name: String)
+
+@Serializable
+data class CopilotSession(val id: String, val title: String, val status: String, val backend: String = "", val active: Boolean = false, val project: String = COPILOT_GLOBAL)
 
 @Serializable
 data class CopilotChat(
@@ -78,4 +91,4 @@ data class CopilotHistory(val chats: List<CopilotSavedChat> = emptyList())
 
 /** A saved Copilot agent chat (its history note); [lastUsed] is epoch ms. */
 @Serializable
-data class CopilotSavedChat(val path: String, val title: String, val lastUsed: Long = 0, val backend: String = "")
+data class CopilotSavedChat(val path: String, val title: String, val lastUsed: Long = 0, val backend: String = "", val project: String = COPILOT_GLOBAL)
