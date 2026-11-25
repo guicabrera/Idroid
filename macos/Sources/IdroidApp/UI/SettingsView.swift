@@ -12,6 +12,8 @@ struct SettingsView: View {
                 .tabItem { Label("Files", systemImage: "folder") }
             SharingSettings()
                 .tabItem { Label("Sharing", systemImage: "folder.badge.person.crop") }
+            InputShareSettings()
+                .tabItem { Label("Mouse", systemImage: "cursorarrow.motionlines") }
             CommandSettings()
                 .tabItem { Label("Commands", systemImage: "terminal") }
             AccountSettings()
@@ -209,5 +211,53 @@ private struct CommandEditor: View {
         }
         .formStyle(.grouped)
         .frame(width: 440)
+    }
+}
+
+/// Shared mouse and keyboard with the phone (ADR-0008).
+private struct InputShareSettings: View {
+    @EnvironmentObject var appState: AppState
+    @State private var trusted = InputShareController.hasPermission
+    private let recheck = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
+
+    private var statusText: String {
+        switch appState.inputShareStatus {
+        case .off: return "Desligado"
+        case .noPermission: return "Falta a permissão de Acessibilidade"
+        case .connecting: return "Esperando o celular (app aberto e serviço de acessibilidade ligado?)"
+        case .ready: return "Pronto: empurre o ponteiro pela borda"
+        case .controlling: return "Controlando o celular (⌘⎋ volta)"
+        }
+    }
+
+    var body: some View {
+        Form {
+            Toggle("Levar mouse e teclado para o celular", isOn: $appState.inputShareEnabled)
+            Picker("Celular", selection: $appState.inputShareDeviceID) {
+                Text("Escolha…").tag(String?.none)
+                ForEach(appState.devices.filter { $0.id != appState.me?.id }) { device in
+                    Text(device.name + (device.online ? "" : " (offline)")).tag(Optional(device.id))
+                }
+            }
+            Picker("Borda da tela", selection: $appState.inputShareEdge) {
+                ForEach(InputShareController.Edge.allCases) { Text($0.label).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            LabeledContent("Status", value: statusText)
+            if !trusted {
+                Button("Dar permissão de Acessibilidade…") { InputShareController.requestPermission() }
+            }
+            Text("Empurre o ponteiro além da borda escolhida para ele aparecer no celular. Clique = toque, arrastar = deslizar, clique direito = voltar, ⌘V cola o clipboard do Mac, ⌘H = início. Volte pela mesma borda do celular ou com ⌘⎋.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .formStyle(.grouped)
+        .onReceive(recheck) { _ in
+            let now = InputShareController.hasPermission
+            if now != trusted {
+                trusted = now
+                appState.applyInputShare()
+            }
+        }
     }
 }

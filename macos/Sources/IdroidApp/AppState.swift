@@ -58,6 +58,26 @@ final class AppState: ObservableObject {
             clipboardSyncController.syncImages = clipboardSyncImages
         }
     }
+    // Shared mouse and keyboard (ADR-0008).
+    @Published var inputShareEnabled: Bool {
+        didSet { defaults.set(inputShareEnabled, forKey: Keys.inputShare); applyInputShare() }
+    }
+    @Published var inputShareDeviceID: String? {
+        didSet { defaults.set(inputShareDeviceID, forKey: Keys.inputShareDevice); applyInputShare() }
+    }
+    @Published var inputShareEdge: InputShareController.Edge {
+        didSet { defaults.set(inputShareEdge.rawValue, forKey: Keys.inputShareEdge); applyInputShare() }
+    }
+    @Published private(set) var inputShareStatus: InputShareController.Status = .off
+    private let inputShareController = InputShareController()
+
+    func applyInputShare() {
+        inputShareController.configure(
+            enabled: inputShareEnabled, deviceID: inputShareDeviceID, edge: inputShareEdge,
+            config: pairing, apiClient: apiClient
+        )
+    }
+
     @Published var notificationsEnabled: Bool {
         didSet { defaults.set(notificationsEnabled, forKey: Keys.notifications) }
     }
@@ -79,6 +99,9 @@ final class AppState: ObservableObject {
         static let clipboardSync = "clipboardSync.enabled"
         static let clipboardImages = "clipboardSync.images"
         static let notifications = "notifications.enabled"
+        static let inputShare = "inputShare.enabled"
+        static let inputShareDevice = "inputShare.device"
+        static let inputShareEdge = "inputShare.edge"
     }
 
     init() {
@@ -89,6 +112,10 @@ final class AppState: ObservableObject {
         clipboardSyncEnabled = defaults.object(forKey: Keys.clipboardSync) as? Bool ?? true
         clipboardSyncImages = defaults.object(forKey: Keys.clipboardImages) as? Bool ?? true
         notificationsEnabled = defaults.object(forKey: Keys.notifications) as? Bool ?? true
+        inputShareEnabled = defaults.bool(forKey: Keys.inputShare)
+        inputShareDeviceID = defaults.string(forKey: Keys.inputShareDevice)
+        inputShareEdge = InputShareController.Edge(rawValue: defaults.string(forKey: Keys.inputShareEdge) ?? "") ?? .right
+        inputShareController.onStatusChange = { [weak self] status in self?.inputShareStatus = status }
         clipboardSyncController.isEnabled = clipboardSyncEnabled
         clipboardSyncController.syncImages = clipboardSyncImages
 
@@ -148,6 +175,7 @@ final class AppState: ObservableObject {
         refreshDevices()
         syncController.connect(config, apiClient: apiClient)
         clipboardSyncController.start(config, apiClient: apiClient)
+        applyInputShare()
     }
 
     func refreshDevices() {

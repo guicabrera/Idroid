@@ -165,6 +165,12 @@ class RelaySyncService : Service() {
             serviceScope.launch { app.fileShareResponder.handle(pairing, event) }
             return
         }
+        if (event.event == "input_request") {
+            // The Mac's pointer crossed onto this phone (ADR-0008).
+            val pairing = app.pairingRepository.load() ?: return
+            if (event.sender_id.isNotEmpty()) InputControlService.join(pairing, event.sender_id)
+            return
+        }
         app.relayEvents.tryEmit(event.event)
         if (event.event != "new_item") return
         serviceScope.launch { processInbox() }

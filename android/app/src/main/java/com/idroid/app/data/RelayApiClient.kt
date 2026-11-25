@@ -330,6 +330,13 @@ class RelayApiClient {
         return httpClient.newWebSocket(request, listener)
     }
 
+    /** Live mouse/keyboard pipe to [peerId] (ADR-0008). */
+    fun openInputSocket(config: PairingConfig, peerId: String, listener: WebSocketListener): WebSocket {
+        val wsUrl = toWebSocketUrl(config.relayBaseUrl) + "/input/" + peerId + "?token=" + config.deviceToken
+        return streamingClient.newBuilder().pingInterval(20, TimeUnit.SECONDS).build()
+            .newWebSocket(Request.Builder().url(wsUrl).build(), listener)
+    }
+
     private fun authedRequest(config: PairingConfig, path: String): Request.Builder =
         Request.Builder()
             .url(config.relayBaseUrl.trimEnd('/') + path)

@@ -93,6 +93,7 @@ import com.idroid.app.data.ItemKind
 import com.idroid.app.data.ItemMeta
 import com.idroid.app.data.PeerDevice
 import com.idroid.app.service.ClipboardAccessibilityService
+import com.idroid.app.service.InputControlService
 import com.idroid.app.ui.theme.IdroidColors
 import kotlinx.coroutines.delay
 
@@ -156,6 +157,7 @@ fun HomeScreen(
             item { ClipboardSyncStatusCard() }
 
             item { SensitiveClipboardRow() }
+            item { MacInputStatusCard() }
 
             item { MessageBanner(uiState, onDismissMessages) }
 
@@ -681,3 +683,37 @@ private fun formatSize(bytes: Long): String {
 
 @Composable
 private fun idroidCardColors() = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
+
+/**
+ * Shared mouse and keyboard from the Mac (ADR-0008): its own accessibility
+ * service, enabled once in system Settings. Shows on/off and links there.
+ */
+@Composable
+private fun MacInputStatusCard() {
+    val context = LocalContext.current
+    var enabled by remember { mutableStateOf(InputControlService.isEnabled(context)) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) enabled = InputControlService.isEnabled(context)
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), colors = idroidCardColors()) {
+        Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                Text("Mouse e teclado do Mac", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    if (enabled) "Ligado: leve o ponteiro do Mac até a borda configurada para controlar o celular."
+                    else "Ative o serviço \"Idroid: mouse e teclado do Mac\" em Acessibilidade.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (!enabled) {
+                Button(onClick = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }) { Text("Ativar") }
+            }
+        }
+    }
+}

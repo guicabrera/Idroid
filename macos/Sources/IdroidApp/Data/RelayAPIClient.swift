@@ -317,6 +317,12 @@ final class RelayAPIClient {
         return session.webSocketTask(with: URLRequest(url: URL(string: wsURL)!))
     }
 
+    /// Live mouse/keyboard pipe to `deviceID` (ADR-0008).
+    func openInputSocket(_ config: PairingConfig, deviceID: String) -> URLSessionWebSocketTask {
+        let wsURL = Self.toWebSocketURL(config.relayBaseURL) + "/input/" + deviceID + "?token=" + config.deviceToken
+        return streamingSession.webSocketTask(with: URLRequest(url: URL(string: wsURL)!))
+    }
+
     // MARK: - Helpers
 
     private func authedRequest(_ config: PairingConfig, path: String) -> URLRequest {

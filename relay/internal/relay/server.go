@@ -51,6 +51,7 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /inbox/{id}/content", s.withAuth(s.handleInboxContent))
 	s.mux.Handle("DELETE /inbox/{id}", s.withAuth(s.handleInboxDelete))
 	s.mux.Handle("GET /ws", s.withAuth(s.handleWebSocket))
+	s.mux.Handle("GET /input/{device_id}", s.withAuth(s.handleInput))
 
 	s.mux.Handle("GET /fs/{device_id}/{op}", s.withAuth(s.handleFSRequest))
 	s.mux.Handle("PUT /fs/{device_id}/{op}", s.withAuth(s.handleFSRequest))
