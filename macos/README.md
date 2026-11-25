@@ -2,7 +2,7 @@
 
 Swift + SwiftUI client for [ADR-0001](../docs/03-architecture/ADR-0001-transport-and-relay-architecture.md): pairs with the relay (see [relay/README.md](../relay/README.md)), sends files/text, lists/downloads/deletes items in the inbox, and keeps a websocket open in the background (via a menu bar presence) so incoming items push in instead of requiring a manual refresh.
 
-## What's in this first increment
+## What's in the app
 
 - **Pairing** (`PairingView.swift` / `PairingStore.swift`): three ways in, per [relay/README.md](../relay/README.md#api) — "Start pairing" generates a 6-digit code on this device and polls until the other device claims it; "Join with code" enters a code shown by the other device; "Manual" is the old fallback of pasting values minted via `POST /admin/devices`, kept for scripting. Pairing config (including the device token) is stored in the macOS Keychain. QR code pairing (encoding the same code into an image) is still open per the Project Vision's feature priority list.
 - **Home view** (`HomeView.swift`): send a quick text/link, pick a file to send (`NSOpenPanel`), and list/download/delete whatever is sitting in this device's relay inbox.

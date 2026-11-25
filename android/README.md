@@ -2,7 +2,7 @@
 
 Kotlin + Jetpack Compose client for [ADR-0001](../docs/03-architecture/ADR-0001-transport-and-relay-architecture.md): pairs with the relay (see [relay/README.md](../relay/README.md)), sends files/text through Android's native Share Sheet, lists/downloads/deletes items in the inbox, and keeps a foreground service running so incoming items push in instead of requiring a manual refresh.
 
-## What's in this first increment
+## What's in the app
 
 - **Pairing** (`PairingScreen.kt` / `PairingRepository.kt`): three ways in, per [relay/README.md](../relay/README.md#api) — "Start pairing" generates a 6-digit code on this phone and polls until the other device claims it; "Join with code" enters a code shown by the other device; "Manual" is the old fallback of pasting values minted via `POST /admin/devices`, kept for scripting. Pairing config (including the device token) is stored in `EncryptedSharedPreferences`. QR code pairing is covered below.
 - **Share Sheet target** (`ShareReceiverActivity.kt`): registers for `ACTION_SEND` / `ACTION_SEND_MULTIPLE` so "Idroid" shows up like any other app in Android's share menu, for both files and plain text/links.
