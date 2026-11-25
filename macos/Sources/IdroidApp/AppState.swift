@@ -90,6 +90,51 @@ final class AppState: ObservableObject {
         inputShareController.startMirror()
     }
 
+    private var pendingMirror = false
+
+    /// One click from the device card: picks the phone, turns the input pipe
+    /// on if needed, and mirrors as soon as the phone is ready.
+    func mirror(_ device: PeerDevice) {
+        if isMirroring && inputShareDeviceID == device.id { toggleMirror(); return }
+        if inputShareDeviceID != device.id { inputShareDeviceID = device.id }
+        if !inputShareEnabled { inputShareEnabled = true }
+        if inputShareStatus == .ready || inputShareStatus == .controlling {
+            toggleMirror()
+        } else if inputShareStatus == .noPermission {
+            Self.alert("Falta uma permissão no Mac",
+                       "O Idroid precisa de Acessibilidade para controlar o celular. Ative-o na lista que vai abrir e tente de novo.")
+            InputShareController.requestPermission()
+        } else {
+            pendingMirror = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
+                guard let self, self.pendingMirror else { return }
+                self.pendingMirror = false
+                Self.alert("O celular não respondeu",
+                           "Confira no celular: app do Idroid conectado e o serviço \"Idroid: mouse e teclado do Mac\" ativo em Acessibilidade.")
+            }
+            statusMessage = "Conectando ao \(device.name)… (o serviço de acessibilidade do Idroid precisa estar ativo no celular)"
+        }
+    }
+
+    func toggleInputShare(_ device: PeerDevice) {
+        if inputShareEnabled && inputShareDeviceID == device.id {
+            inputShareEnabled = false
+        } else {
+            inputShareDeviceID = device.id
+            inputShareEnabled = true
+        }
+    }
+
+    var inputShareStatusText: String {
+        switch inputShareStatus {
+        case .off: return "Desligado"
+        case .noPermission: return "Falta a permissão de Acessibilidade no Mac"
+        case .connecting: return "Esperando o celular (serviço de acessibilidade do Idroid ligado?)"
+        case .ready: return "Pronto: empurre o ponteiro pela borda \(inputShareEdge == .right ? "direita" : "esquerda") ou espelhe a tela"
+        case .controlling: return "Controlando o celular (⌘⎋ volta)"
+        }
+    }
+
     static func alert(_ title: String, _ text: String) {
         let alert = NSAlert()
         alert.messageText = title
@@ -150,7 +195,17 @@ final class AppState: ObservableObject {
         inputShareController.onMirrorStopped = {
             Self.alert("Espelhamento encerrado", "O celular parou a captura ou a gravação de tela foi recusada.")
         }
-        inputShareController.onStatusChange = { [weak self] status in self?.inputShareStatus = status }
+        inputShareController.onStatusChange = { [weak self] status in
+            guard let self else { return }
+            self.inputShareStatus = status
+            if status == .ready, self.pendingMirror {
+                self.pendingMirror = false
+                self.toggleMirror()
+            } else if status == .noPermission, self.pendingMirror {
+                self.pendingMirror = false
+                InputShareController.requestPermission()
+            }
+        }
         clipboardSyncController.isEnabled = clipboardSyncEnabled
         clipboardSyncController.syncImages = clipboardSyncImages
 

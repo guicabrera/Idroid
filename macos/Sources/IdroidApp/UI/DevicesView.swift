@@ -110,6 +110,22 @@ private struct DeviceCard: View {
                 }
             }
 
+            if !isSelf && !appState.isControllable(device) {
+                // Phone: screen mirror (ADR-0009) and shared mouse/keyboard (ADR-0008), front and center.
+                HStack(spacing: 6) {
+                    remoteButton(appState.isMirroring && appState.inputShareDeviceID == device.id ? "Parar espelho" : "Espelhar tela",
+                                 "iphone.and.arrow.forward") { appState.mirror(device) }
+                    remoteButton(appState.inputShareEnabled && appState.inputShareDeviceID == device.id ? "Mouse: ligado" : "Mouse: desligado",
+                                 "cursorarrow.motionlines") { appState.toggleInputShare(device) }
+                }
+                .disabled(!device.online)
+                if appState.inputShareDeviceID == device.id && appState.inputShareEnabled {
+                    Text(appState.inputShareStatusText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             if !isSelf && appState.isControllable(device) {
                 HStack(spacing: 6) {
                     remoteButton("Terminal", "terminal") { openWindow(id: RemoteWindow.id, value: RemoteTarget(deviceID: device.id, kind: .terminal)) }
