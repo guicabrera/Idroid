@@ -25,6 +25,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRowDefaults
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -37,6 +39,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -58,8 +62,7 @@ private sealed interface TermTab {
  * Several terminals on one Mac at once: relay terminals (with Commands, AI
  * and Copilot) and interactive SSH shells, each in its own tab. Every tab
  * stays composed while hidden, so commands keep running and SSH sessions stay
- * connected; hidden tabs are laid out at zero size, which the SSH view
- * ignores, so the remote PTY keeps its size.
+ * connected; hidden tabs sit transparent under the visible one.
  */
 @Composable
 fun TerminalTabs(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit) {
@@ -99,11 +102,19 @@ fun TerminalTabs(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit)
     Column(Modifier.fillMaxSize()) {
         Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
             Row(Modifier.fillMaxWidth().statusBarsPadding(), verticalAlignment = Alignment.CenterVertically) {
+                val selectedIndex = tabs.indexOfFirst { it.id == selected }.coerceAtLeast(0)
                 ScrollableTabRow(
-                    selectedTabIndex = tabs.indexOfFirst { it.id == selected }.coerceAtLeast(0),
+                    selectedTabIndex = selectedIndex,
                     modifier = Modifier.weight(1f),
                     edgePadding = 4.dp,
                     containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                    // The default indicator reads tabPositions[selectedIndex] before a just-added
+                    // tab has been measured (IndexOutOfBounds): skip that one frame instead.
+                    indicator = { positions ->
+                        positions.getOrNull(selectedIndex)?.let {
+                            TabRowDefaults.SecondaryIndicator(Modifier.tabIndicatorOffset(it))
+                        }
+                    },
                 ) {
                     tabs.forEach { tab ->
                         Tab(
@@ -157,7 +168,10 @@ fun TerminalTabs(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit)
             tabs.forEach { tab ->
                 key(tab.id) {
                     val active = tab.id == selected
-                    Box(if (active) Modifier.fillMaxSize() else Modifier.size(0.dp)) {
+                    // Every tab stays placed full size, stacked: the visible one on top (its
+                    // Scaffold surface takes the touches), the others transparent underneath.
+                    // 0-size or unplaced tabs drew over the tab row (native views included).
+                    Box(Modifier.fillMaxSize().zIndex(if (active) 1f else 0f).graphicsLayer { alpha = if (active) 1f else 0f }) {
                         when (tab) {
                             is TermTab.Shell -> TerminalScreen(
                                 device, pairing,
