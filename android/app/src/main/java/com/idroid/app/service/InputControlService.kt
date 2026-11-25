@@ -314,8 +314,16 @@ class InputControlService : AccessibilityService() {
     private fun focusedField(): AccessibilityNodeInfo? =
         rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.takeIf { it.isEditable }
 
-    private fun currentText(node: AccessibilityNodeInfo): String =
-        if (node.isShowingHintText) "" else node.text?.toString().orEmpty()
+    /**
+     * Some apps (WhatsApp's "Mensagem") report the placeholder as the field's
+     * text without setting isShowingHintText; treat text equal to the hint as empty.
+     */
+    private fun currentText(node: AccessibilityNodeInfo): String {
+        if (node.isShowingHintText) return ""
+        val text = node.text?.toString().orEmpty()
+        val hint = node.hintText?.toString()
+        return if (!hint.isNullOrEmpty() && text == hint) "" else text
+    }
 
     private fun selection(node: AccessibilityNodeInfo, text: String): Pair<Int, Int> {
         var start = node.textSelectionStart

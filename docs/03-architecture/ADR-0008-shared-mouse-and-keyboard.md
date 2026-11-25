@@ -40,3 +40,4 @@ The user wants the Mac's keyboard and mouse to "flow" onto the phone across a sc
 | Date | Status | Notes |
 |------|--------|-------|
 | 2026-11-25 | accepted | Relay pipe, macOS controller and Android service implemented. |
+| 2026-11-25 | accepted | Pointer felt sluggish through the relay (TCP, podman VM hop): moves now go straight Mac → phone over UDP (`hello` carries port, key and LAN/Tailscale IPv4s; `key\|seq\|dx\|dy` datagrams, stale ones dropped); clicks and keys stay on the relay pipe. Mac applies an acceleration curve and batches moves every 8 ms; phone holds a low-latency Wi-Fi lock while the pipe is open. |
