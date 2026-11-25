@@ -383,9 +383,27 @@ class InputControlService : AccessibilityService() {
         }
     }
 
+    private var lastImeWarning = 0L
+
+    /** Shown when typing arrives but no field connection exists (service not re-enabled, or no text field focused). */
+    private fun warnNoIme() {
+        val now = SystemClock.uptimeMillis()
+        if (now - lastImeWarning < 5000) return
+        lastImeWarning = now
+        android.widget.Toast.makeText(
+            this,
+            "Idroid: toque num campo de texto. Se já tocou, desligue e ligue o serviço \"mouse e teclado do Mac\" em Acessibilidade.",
+            android.widget.Toast.LENGTH_LONG,
+        ).show()
+    }
+
     private fun typeText(s: String) {
         if (android.os.Build.VERSION.SDK_INT >= 33) {
-            imeConnection()?.let { it.commitText(s, 1, null); return }
+            // Never fall back to rewriting the field here: that's what leaked
+            // WhatsApp's "Mensagem" placeholder into the text.
+            val ic = imeConnection() ?: return warnNoIme()
+            ic.commitText(s, 1, null)
+            return
         }
         val node = focusedField() ?: return
         val text = currentText(node)
@@ -401,6 +419,7 @@ class InputControlService : AccessibilityService() {
             "notifications" -> { performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS); return }
         }
         if (imeHandled(k)) return
+        if (android.os.Build.VERSION.SDK_INT >= 33) return warnNoIme()
         val node = focusedField() ?: return
         val text = currentText(node)
         val (a, b) = selection(node, text)
