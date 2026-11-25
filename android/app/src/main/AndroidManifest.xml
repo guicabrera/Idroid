@@ -6,6 +6,7 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -81,6 +82,18 @@
             android:noHistory="true"
             android:taskAffinity=""
             android:launchMode="singleInstance" />
+
+        <!-- Screen mirroring to the Mac (ADR-0009): consent prompt + capture service. -->
+        <activity
+            android:name=".service.MirrorConsentActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Idroid.Invisible"
+            android:excludeFromRecents="true"
+            android:taskAffinity="" />
+        <service
+            android:name=".service.MirrorService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
 
         <!-- Serves incoming clipboard images to the app that pastes them (ClipboardSync.kt). -->
         <provider

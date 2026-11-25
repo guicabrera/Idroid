@@ -2,6 +2,7 @@ package com.idroid.app.service
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.content.Intent
 import android.graphics.Color
 import android.graphics.Path
 import android.graphics.PixelFormat
@@ -193,6 +194,7 @@ class InputControlService : AccessibilityService() {
                 socket = null
                 holdWifi(false)
                 stopUdp()
+                MirrorService.stop(this@InputControlService)
                 leave()
             }
         }
@@ -210,6 +212,13 @@ class InputControlService : AccessibilityService() {
     private fun handle(msg: JsonObject) {
         when (msg.str("t")) {
             "enter" -> enter(msg.str("side") ?: "left", msg.num("y"))
+            // Mirror window on the Mac (ADR-0009): absolute position, no overlay pointer.
+            "pos" -> {
+                val (w, h) = screenSize()
+                x = (msg.num("x").coerceIn(0f, 1f) * (w - 1)); y = (msg.num("y").coerceIn(0f, 1f) * (h - 1))
+                mirrorInput = true
+            }
+            "mirror" -> if (msg.str("on") == "true") startMirror() else MirrorService.stop(this)
             "leave" -> leave()
             "move" -> move(msg.num("dx"), msg.num("dy"))
             "down" -> { pressed = true; downAt = SystemClock.uptimeMillis(); downX = x; downY = y }
@@ -273,6 +282,16 @@ class InputControlService : AccessibilityService() {
     }
 
     private var redrawPending = false
+    private var mirrorInput = false
+
+    private fun startMirror() {
+        // Bound accessibility services may start activities from the background.
+        startActivity(
+            Intent(this, MirrorConsentActivity::class.java).addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION or Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS,
+            ),
+        )
+    }
 
     // --- Gestures ---------------------------------------------------------------
 
@@ -293,7 +312,7 @@ class InputControlService : AccessibilityService() {
     }
 
     private fun dispatchScroll() {
-        if (!active || (scrollX == 0f && scrollY == 0f)) return
+        if ((!active && !mirrorInput) || (scrollX == 0f && scrollY == 0f)) return
         val (w, h) = screenSize()
         // Mac "natural" deltas move content with the fingers: a swipe the same way.
         val tx = (x + scrollX * SCROLL_GAIN).coerceIn(1f, w - 2)
@@ -496,6 +515,22 @@ class InputControlService : AccessibilityService() {
             val service = instance
             if (service == null) { pendingJoin = config to peerId; return }
             service.main.post { service.connect(config, peerId) }
+        }
+
+        /** MirrorService is serving: tell the Mac where to connect. */
+        fun mirrorReady(port: Int, key: String, width: Int, height: Int) {
+            val service = instance ?: return
+            service.main.post {
+                service.send {
+                    put("t", "mirror_ready"); put("port", port); put("key", key)
+                    put("w", width); put("h", height)
+                }
+            }
+        }
+
+        fun mirrorStopped() {
+            val service = instance ?: return
+            service.main.post { service.mirrorInput = false; service.send { put("t", "mirror_stopped") } }
         }
 
         fun isEnabled(context: android.content.Context): Boolean {

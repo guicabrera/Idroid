@@ -72,6 +72,31 @@ final class AppState: ObservableObject {
         didSet { defaults.set(inputShareSpeed, forKey: Keys.inputShareSpeed); inputShareController.speed = inputShareSpeed }
     }
     @Published private(set) var inputShareStatus: InputShareController.Status = .off
+    @Published private(set) var isMirroring = false
+
+    /// Screen mirror (ADR-0009): needs the input pipe up (Settings → Mouse on, phone ready).
+    func toggleMirror() {
+        if isMirroring {
+            inputShareController.stopMirror()
+            isMirroring = false
+            return
+        }
+        guard inputShareEnabled, inputShareStatus == .ready || inputShareStatus == .controlling else {
+            Self.alert("Não dá para espelhar ainda",
+                       "Ligue Ajustes → Mouse, escolha o celular e espere o status \"Pronto\". No celular, o serviço \"Idroid: mouse e teclado do Mac\" precisa estar ativo em Acessibilidade.")
+            return
+        }
+        inputShareController.mirrorTitle = devices.first { $0.id == inputShareDeviceID }?.name ?? "Celular"
+        inputShareController.startMirror()
+    }
+
+    static func alert(_ title: String, _ text: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = text
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
+    }
     private let inputShareController = InputShareController()
 
     func applyInputShare() {
@@ -121,6 +146,10 @@ final class AppState: ObservableObject {
         inputShareEdge = InputShareController.Edge(rawValue: defaults.string(forKey: Keys.inputShareEdge) ?? "") ?? .right
         inputShareSpeed = defaults.object(forKey: Keys.inputShareSpeed) as? Double ?? 1.0
         inputShareController.speed = inputShareSpeed
+        inputShareController.onMirrorChange = { [weak self] on in self?.isMirroring = on }
+        inputShareController.onMirrorStopped = {
+            Self.alert("Espelhamento encerrado", "O celular parou a captura ou a gravação de tela foi recusada.")
+        }
         inputShareController.onStatusChange = { [weak self] status in self?.inputShareStatus = status }
         clipboardSyncController.isEnabled = clipboardSyncEnabled
         clipboardSyncController.syncImages = clipboardSyncImages

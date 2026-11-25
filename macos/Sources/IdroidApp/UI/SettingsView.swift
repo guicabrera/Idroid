@@ -248,6 +248,8 @@ private struct InputShareSettings: View {
                 Text(String(format: "%.1f×", appState.inputShareSpeed)).monospacedDigit().frame(width: 40)
             }
             LabeledContent("Status", value: statusText)
+            Button(appState.isMirroring ? "Parar espelhamento" : "Espelhar a tela do celular") { appState.toggleMirror() }
+                .disabled(!appState.isMirroring && appState.inputShareStatus != .ready && appState.inputShareStatus != .controlling)
             if !trusted {
                 Button("Dar permissão de Acessibilidade…") { InputShareController.requestPermission() }
             }

@@ -32,6 +32,9 @@ struct MenuBarMenu: View {
                 }
             }
 
+            Button(appState.isMirroring ? "Stop Phone Mirror" : "Mirror Phone Screen") { appState.toggleMirror() }
+                .keyboardShortcut("m", modifiers: [.command, .shift])
+
             targetMenu("Send Files") { appState.pickAndSendFiles(to: $0) }
             targetMenu("Send Clipboard") { appState.sendClipboard(to: $0) }
 

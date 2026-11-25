@@ -124,6 +124,7 @@ final class InputShareController {
     private func dropped() {
         returnToMac(atFraction: nil)
         closeUDP()
+        if mirror.isOpen { mirror.close(notify: false); onMirrorChange?(false) }
         socket = nil
         peerReady = false
         guard deviceID != nil else { return }
@@ -142,10 +143,53 @@ final class InputShareController {
             peerReady = true
             setupUDP(msg)
             if !remote { status = .ready }
+        case "mirror_ready":
+            guard let port = msg["port"] as? Int, let key = msg["key"] as? String else { return }
+            mirror.open(addrs: phoneAddrs, port: port, key: key,
+                        width: msg["w"] as? Int ?? 720, height: msg["h"] as? Int ?? 1600, title: mirrorTitle)
+            onMirrorChange?(true)
+        case "mirror_stopped":
+            // Only surface it when the phone ended it, not after the user closed the window.
+            let wasOpen = mirror.isOpen
+            if wasOpen { mirror.close(notify: false) }
+            onMirrorChange?(false)
+            if wasOpen { onMirrorStopped?() }
         case "exit":
             returnToMac(atFraction: (msg["y"] as? Double).map { CGFloat($0) })
         default: break
         }
+    }
+
+    // MARK: - Mirror (ADR-0009)
+
+    /// Called on the main queue when the mirror window opens or closes.
+    var onMirrorChange: ((Bool) -> Void)?
+    /// The phone ended or refused the capture.
+    var onMirrorStopped: (() -> Void)?
+    var mirrorTitle = "Celular"
+    private var phoneAddrs: [String] = []
+    private lazy var mirror: MirrorWindowController = {
+        let controller = MirrorWindowController { [weak self] msg in self?.send(msg) }
+        controller.onClose = { [weak self] in
+            self?.send(["t": "mirror", "on": "false"])
+            self?.onMirrorChange?(false)
+        }
+        return controller
+    }()
+
+    var canMirror: Bool { peerReady }
+
+    /// Asks the phone to start capturing; it shows Android's consent prompt,
+    /// then answers "mirror_ready" and the window opens.
+    func startMirror() {
+        guard peerReady else { return }
+        mirror.showWaiting(title: mirrorTitle)
+        onMirrorChange?(true)
+        send(["t": "mirror", "on": "true"])
+    }
+
+    func stopMirror() {
+        mirror.close(notify: true)
     }
 
     // MARK: - Direct UDP for moves
@@ -158,6 +202,7 @@ final class InputShareController {
 
     private func setupUDP(_ msg: [String: Any]) {
         closeUDP()
+        phoneAddrs = msg["addrs"] as? [String] ?? []
         guard let port = msg["udp"] as? Int, port > 0, let key = msg["key"] as? String,
               let addrs = msg["addrs"] as? [String], let nwPort = NWEndpoint.Port(rawValue: UInt16(port)) else { return }
         udpKey = key
