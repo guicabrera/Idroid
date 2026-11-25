@@ -204,6 +204,7 @@ fun TerminalScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Uni
     var agent by remember { mutableStateOf<TerminalAgent?>(null) }
     var askInput by remember { mutableStateOf<CommandAction?>(null) }
     var sshOpen by remember { mutableStateOf(false) }
+    var copilotOpen by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
     suspend fun loadCatalog() {
@@ -366,6 +367,10 @@ fun TerminalScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Uni
             .filter { it.trimEnd() != input.trimEnd() }.distinct().take(25)
     }
 
+    if (copilotOpen) {
+        CopilotScreen(device, pairing, onBack = { copilotOpen = false })
+        return
+    }
     val loaded = catalog
     if (sshOpen && loaded != null) {
         SshScreen(device, pairing, loaded, onBack = { sshOpen = false })
@@ -384,6 +389,7 @@ fun TerminalScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Uni
                 },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 actions = {
+                    IconButton(onClick = { copilotOpen = true }) { Icon(Icons.Filled.SmartToy, "Obsidian Copilot") }
                     IconButton(onClick = { sshOpen = true }, enabled = catalog != null) { Icon(Icons.Filled.Computer, "SSH terminal (interactive)") }
                     IconButton(onClick = { scope.launch { loadCatalog() } }) { Icon(Icons.Filled.Refresh, "Reload commands") }
                     IconButton(onClick = { showAiSettings = true }) { Icon(Icons.Filled.Settings, "AI settings") }
