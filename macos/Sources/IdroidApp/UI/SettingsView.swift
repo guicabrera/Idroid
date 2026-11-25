@@ -243,6 +243,10 @@ private struct InputShareSettings: View {
                 ForEach(InputShareController.Edge.allCases) { Text($0.label).tag($0) }
             }
             .pickerStyle(.segmented)
+            LabeledContent("Velocidade") {
+                Slider(value: $appState.inputShareSpeed, in: 0.4...3, step: 0.1)
+                Text(String(format: "%.1f×", appState.inputShareSpeed)).monospacedDigit().frame(width: 40)
+            }
             LabeledContent("Status", value: statusText)
             if !trusted {
                 Button("Dar permissão de Acessibilidade…") { InputShareController.requestPermission() }

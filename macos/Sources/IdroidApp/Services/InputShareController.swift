@@ -42,6 +42,11 @@ final class InputShareController {
     /// Where the cursor sat when control left; it stays frozen there.
     private var frozenAt = CGPoint.zero
     private var edgePush: CGFloat = 0
+    /// Pointer speed multiplier set in Settings.
+    var speed: Double = 1.0
+    private var pendingDX: Double = 0
+    private var pendingDY: Double = 0
+    private var flushScheduled = false
 
     static var hasPermission: Bool { AXIsProcessTrusted() }
 
@@ -243,9 +248,9 @@ final class InputShareController {
 
         switch type {
         case .mouseMoved, .leftMouseDragged, .rightMouseDragged:
-            send(["t": "move", "dx": Double(dx), "dy": Double(dy)])
-        case .leftMouseDown: send(["t": "down"])
-        case .leftMouseUp: send(["t": "up"])
+            queueMove(Double(dx), Double(dy))
+        case .leftMouseDown: flushMove(); send(["t": "down"])
+        case .leftMouseUp: flushMove(); send(["t": "up"])
         case .rightMouseDown: send(["t": "rclick"])
         case .rightMouseUp: break
         case .scrollWheel:
@@ -259,6 +264,33 @@ final class InputShareController {
             return Unmanaged.passUnretained(event)
         }
         return nil // swallowed: the Mac doesn't see it
+    }
+
+    /// Mouse deltas from the tap are unaccelerated: apply a curve here so slow
+    /// moves stay precise and fast flicks cross the phone, then batch them into
+    /// at most one frame every ~8 ms instead of one per hardware event.
+    private func queueMove(_ dx: Double, _ dy: Double) {
+        let v = (dx * dx + dy * dy).squareRoot()
+        let gain = speed * (1 + min(v, 30) / 6)
+        pendingDX += dx * gain
+        pendingDY += dy * gain
+        guard !flushScheduled else { return }
+        flushScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(8)) { [weak self] in
+            guard let self else { return }
+            self.flushScheduled = false
+            guard self.remote, self.pendingDX != 0 || self.pendingDY != 0 else { return }
+            self.send(["t": "move", "dx": self.pendingDX, "dy": self.pendingDY])
+            self.pendingDX = 0
+            self.pendingDY = 0
+        }
+    }
+
+    private func flushMove() {
+        guard pendingDX != 0 || pendingDY != 0 else { return }
+        send(["t": "move", "dx": pendingDX, "dy": pendingDY])
+        pendingDX = 0
+        pendingDY = 0
     }
 
     private func handleKey(_ event: CGEvent) {

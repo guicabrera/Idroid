@@ -167,8 +167,10 @@ class InputControlService : AccessibilityService() {
     private fun move(dx: Float, dy: Float) {
         if (!active) return
         val (w, h) = screenSize()
-        val nx = x + dx * SPEED
-        val ny = (y + dy * SPEED).coerceIn(0f, h - 1)
+        // Mac points → phone pixels: scale by screen density.
+        val k = resources.displayMetrics.density * 0.75f
+        val nx = x + dx * k
+        val ny = (y + dy * k).coerceIn(0f, h - 1)
         val out = (returnSide == "left" && nx < 0f) || (returnSide == "right" && nx > w - 1)
         if (out && !pressed) {
             send { put("t", "exit"); put("y", (ny / h).toDouble()) }
@@ -177,8 +179,14 @@ class InputControlService : AccessibilityService() {
         }
         x = nx.coerceIn(0f, w - 1)
         y = ny
-        updatePointer()
+        // One overlay relayout per frame, however many moves arrive.
+        if (!redrawPending) {
+            redrawPending = true
+            android.view.Choreographer.getInstance().postFrameCallback { redrawPending = false; updatePointer() }
+        }
     }
+
+    private var redrawPending = false
 
     // --- Gestures ---------------------------------------------------------------
 
@@ -320,7 +328,6 @@ class InputControlService : AccessibilityService() {
     }
 
     companion object {
-        private const val SPEED = 2.2f
         private const val SCROLL_GAIN = 6f
         private const val SCROLL_IDLE_MS = 60L
         private const val TAP_SLOP = 12f
