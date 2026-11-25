@@ -68,6 +68,9 @@ final class AppState: ObservableObject {
     @Published var inputShareEdge: InputShareController.Edge {
         didSet { defaults.set(inputShareEdge.rawValue, forKey: Keys.inputShareEdge); applyInputShare() }
     }
+    @Published var inputShareSpeed: Double {
+        didSet { defaults.set(inputShareSpeed, forKey: Keys.inputShareSpeed); inputShareController.speed = inputShareSpeed }
+    }
     @Published private(set) var inputShareStatus: InputShareController.Status = .off
     private let inputShareController = InputShareController()
 
@@ -102,6 +105,7 @@ final class AppState: ObservableObject {
         static let inputShare = "inputShare.enabled"
         static let inputShareDevice = "inputShare.device"
         static let inputShareEdge = "inputShare.edge"
+        static let inputShareSpeed = "inputShare.speed"
     }
 
     init() {
@@ -115,6 +119,8 @@ final class AppState: ObservableObject {
         inputShareEnabled = defaults.bool(forKey: Keys.inputShare)
         inputShareDeviceID = defaults.string(forKey: Keys.inputShareDevice)
         inputShareEdge = InputShareController.Edge(rawValue: defaults.string(forKey: Keys.inputShareEdge) ?? "") ?? .right
+        inputShareSpeed = defaults.object(forKey: Keys.inputShareSpeed) as? Double ?? 1.0
+        inputShareController.speed = inputShareSpeed
         inputShareController.onStatusChange = { [weak self] status in self?.inputShareStatus = status }
         clipboardSyncController.isEnabled = clipboardSyncEnabled
         clipboardSyncController.syncImages = clipboardSyncImages
