@@ -16,8 +16,9 @@ status: active
 
 Source: `obsidian-bridge/` (installed as `.obsidian/plugins/idroid-bridge`). On load it serves HTTP on a random `127.0.0.1` port and writes:
 
-- `~/.idroid/copilot-bridge.json` (`0600`): `{port, token}`.
-- `~/.idroid/copilot`: helper, `copilot <METHOD> <PATH> [JSON body]`.
+- `~/.idroid/copilot-bridge.json` (`0600`): `{port, token, pid}` (`pid` = Obsidian's renderer; removed on unload, left stale by a crash).
+- `~/.idroid/copilot`: helper, `copilot <METHOD> <PATH> [JSON body]`. If the info file is missing, its `pid` is dead or the port refuses the connection, it runs `obsidian-watchdog ensure` (restarts Obsidian, waits up to 90 s for the bridge) and retries once; exit 3 if Obsidian doesn't come back.
+- `~/.idroid/obsidian-watchdog`: copy of `obsidian-bridge/watchdog.sh` (see the [release guide](../05-deployment/release-guide.md#idroid-bridge-obsidian-plugin)).
 
 The phone runs the helper through [`exec`](./remote-commands-api.md), passing the body as `$1`.
 
@@ -34,6 +35,11 @@ The phone runs the helper through [`exec`](./remote-commands-api.md), passing th
 | `POST /permission` | `{session, toolCallId, optionId}` | `{}` |
 | `POST /cancel` | `{session}` | `{}` |
 | `POST /open` | `{session}` | `{}` — makes it the open chat on the Mac. |
+| `POST /close` | `{session}` | `{closing}` — the phone closed the tab (or the Mac's remote window). Only chats created through this bridge's `/send` are closed, after their turn and never while open on the Mac; `closing: false` = not one of them. |
+
+## Cleanup
+
+Every 30 s the plugin closes chats it created that were asked to close or haven't changed for 30 min (same rules as `/close`; they stay in the history and can be resumed), and turns `tailscale serve --https=8445` off once no phone VS Code window has been connected for 10 min (`POST /vscode` turns it on again). Crashes and memory: `obsidian-watchdog` (release guide).
 | `GET /history` | — | `{chats[{path, title, lastUsed (epoch ms), backend}]}` — saved agent chats, newest first (100). |
 | `POST /resume` | `{path}` | `{session}` — reopens a saved chat (as the Navigator does). |
 | `POST /vscode` | `{folder?}` | `{url, folder, vault, home}` — starts VS Code Pane's server, runs `tailscale serve --bg --https=8445`, URL opens `folder` (default: vault). |

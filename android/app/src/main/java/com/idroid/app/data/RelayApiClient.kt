@@ -4,7 +4,9 @@ import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
@@ -288,8 +290,9 @@ class RelayApiClient {
             .put(payload.toRequestBody("application/json".toMediaTypeOrNull()))
             .build()
         val call = streamingClient.newCall(request)
-        val job = coroutineContext[kotlinx.coroutines.Job]
-        val cancel = job?.invokeOnCompletion { if (it != null) call.cancel() }
+        // read() blocks without seeing cancellation (claude -p prints nothing
+        // until it's done): a sibling cancels the call instead, which unblocks it.
+        val watcher = launch { try { awaitCancellation() } finally { call.cancel() } }
         try {
             call.execute().use { response ->
                 if (!response.isSuccessful) {
@@ -317,7 +320,7 @@ class RelayApiClient {
                     .getOrElse { if (trailer.isNotEmpty()) onOutput(trailer); ExecResult(exit = -1, cwd = exec.cwd ?: "") }
             }
         } finally {
-            cancel?.dispose()
+            watcher.cancel()
         }
     }
 

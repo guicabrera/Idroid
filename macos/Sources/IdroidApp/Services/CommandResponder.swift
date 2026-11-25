@@ -143,16 +143,40 @@ enum CommandResponder {
         }
 
         try process.run()
-        let deadline = DispatchWorkItem { if process.isRunning { process.terminate() } }
+        let pid = process.processIdentifier
+        let deadline = DispatchWorkItem { if process.isRunning { killTree(pid) } }
         DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: deadline)
         defer { deadline.cancel() }
         do {
             try await apiClient.respondFS(config, requestID: requestID, contentType: "text/plain; charset=utf-8", stream: input)
         } catch {
             // The phone went away (or the relay dropped us): don't leave it running.
-            if process.isRunning { process.terminate() }
+            if process.isRunning { killTree(pid) }
             writer.close()
             throw error
+        }
+        // The upload only ends on its own after the trailer, i.e. once zsh exited;
+        // ending earlier means the relay stopped reading because the phone left.
+        if process.isRunning {
+            killTree(pid)
+            writer.close()
+        }
+    }
+
+    /// SIGTERM to zsh and everything it started (claude, node, git…: they don't
+    /// die with zsh), SIGKILL to whatever is still there 3 s later.
+    static func killTree(_ root: pid_t) {
+        var pids: [pid_t] = []
+        var queue = [root]
+        while let pid = queue.popLast() {
+            pids.append(pid)
+            var children = [pid_t](repeating: 0, count: 256)
+            let n = proc_listchildpids(pid, &children, Int32(children.count * MemoryLayout<pid_t>.size))
+            if n > 0 { queue += children.prefix(Int(n)).filter { $0 > 0 } }
+        }
+        for pid in pids.reversed() { kill(pid, SIGTERM) }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 3) {
+            for pid in pids where kill(pid, 0) == 0 { kill(pid, SIGKILL) }
         }
     }
 

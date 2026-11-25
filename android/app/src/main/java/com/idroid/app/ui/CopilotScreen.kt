@@ -44,6 +44,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -153,6 +154,18 @@ fun CopilotScreen(
                     error = it.message
                     delay(3_000)
                 }
+        }
+    }
+
+    // Closing the tab closes the chats it used on the Mac. The bridge only closes
+    // ones the phone created, once their turn is over, and never the Mac's open chat.
+    val used = remember { mutableSetOf<String>() }
+    LaunchedEffect(sessionId) { sessionId?.takeIf { BRIDGE_ID.matches(it) }?.let { used += it } }
+    DisposableEffect(Unit) {
+        onDispose {
+            if (used.isNotEmpty()) app.appScope.launch {
+                for (id in used.toList()) runCatching { post("/close", "session" to id) }
+            }
         }
     }
 

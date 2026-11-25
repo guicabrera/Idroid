@@ -23,7 +23,7 @@ Each Mac in the device list has a terminal button (>_). It opens a tab strip ([t
 
 ## Terminal tab
 
-- Runs a command with `zsh -l -c` as the user, non-interactive (stdin closed, `TERM=dumb`, pagers off), 15 min timeout. Output streams in while the command runs; the stop button closes the connection and the Mac kills the command.
+- Runs a command with `zsh -l -c` as the user, non-interactive (stdin closed, `TERM=dumb`, pagers off), 15 min timeout. Output streams in while the command runs; the stop button, closing the tab (or the Mac's remote window) closes the connection and the Mac kills the command with everything it started (`claude`, `node`…), even if it was printing nothing.
 - The working folder carries over between commands: the Mac reports the shell's final `$PWD`, so `cd` works. It shows under the Mac's name.
 - **Autocomplete:** chips above the input, from this tab's history first, then the Mac (commands for the first word, files and folders after it).
 - Free commands need **Allow terminal from paired devices** on the Mac (Settings → Commands). It is **on by default**; when off, only named commands run and a banner says so.

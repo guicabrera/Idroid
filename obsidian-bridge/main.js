@@ -33,17 +33,39 @@ const PHONE_VSCODE_SETTINGS = {
 const PHONE_VSCODE_COMMANDS = ["workbench.action.joinAllGroups", "workbench.action.closeAuxiliaryBar"];
 const TAILSCALE_CLI = ["/usr/local/bin/tailscale", "/opt/homebrew/bin/tailscale", "/Applications/Tailscale.app/Contents/MacOS/Tailscale"];
 const MAX_TOOL_TEXT = 400;
+/** Chats the phone created are closed this long after their last change (unless open on the Mac). */
+const PHONE_CHAT_IDLE_MS = 30 * 60 * 1000;
+/** `tailscale serve` for VS Code is turned off this long after the last phone window left. */
+const VSCODE_SERVE_IDLE_MS = 10 * 60 * 1000;
+const BUSY = new Set(["starting", "running", "streaming", "awaiting_permission"]);
 
+const WATCHDOG = path.join(DIR, "obsidian-watchdog");
+
+// When Obsidian's renderer crashes the info file stays behind with a dead port
+// (and pid); the watchdog restarts Obsidian and the call is made once more.
 const HELPER_SCRIPT = `#!/bin/zsh
 # Calls the Idroid Bridge plugin in Obsidian: copilot <METHOD> <PATH> [JSON body]
 info="$HOME/.idroid/copilot-bridge.json"
-[[ -r "$info" ]] || { print -u2 "Idroid Bridge isn't running: open Obsidian on this Mac."; exit 3; }
-port=$(/usr/bin/plutil -extract port raw -o - "$info")
-token=$(/usr/bin/plutil -extract token raw -o - "$info")
-data=()
-[[ -n "$3" ]] && data=(--data-binary "$3")
-exec /usr/bin/curl -sS --max-time 60 -X "$1" -H "Authorization: Bearer $token" -H "Content-Type: application/json" \\
-  "\${data[@]}" "http://127.0.0.1:$port$2"
+watchdog="$HOME/.idroid/obsidian-watchdog"
+call() {
+  port=$(/usr/bin/plutil -extract port raw -o - "$info")
+  token=$(/usr/bin/plutil -extract token raw -o - "$info")
+  data=()
+  [[ -n "$3" ]] && data=(--data-binary "$3")
+  /usr/bin/curl -sS --max-time 60 -X "$1" -H "Authorization: Bearer $token" -H "Content-Type: application/json" \\
+    "\${data[@]}" "http://127.0.0.1:$port$2"
+}
+pid=$([[ -r "$info" ]] && /usr/bin/plutil -extract pid raw -o - "$info" 2>/dev/null)
+if [[ ! -r "$info" ]] || { [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; }; then
+  [[ -x "$watchdog" ]] || { print -u2 "Idroid Bridge isn't running: open Obsidian on this Mac."; exit 3; }
+  "$watchdog" ensure || exit 3
+fi
+call "$@"; rc=$?
+if (( rc == 7 )) && [[ -x "$watchdog" ]]; then
+  "$watchdog" ensure || exit 3
+  call "$@"; rc=$?
+fi
+exit $rc
 `;
 
 module.exports = class IdroidBridge extends Plugin {
@@ -57,8 +79,13 @@ module.exports = class IdroidBridge extends Plugin {
     });
     this.server.listen(0, "127.0.0.1", () => {
       fs.mkdirSync(DIR, { recursive: true, mode: 0o700 });
-      fs.writeFileSync(INFO, JSON.stringify({ port: this.server.address().port, token: this.token }), { mode: 0o600 });
+      // pid: the renderer, so a file left behind by a crash is recognized as stale.
+      fs.writeFileSync(INFO, JSON.stringify({ port: this.server.address().port, token: this.token, pid: process.pid }), { mode: 0o600 });
       fs.writeFileSync(HELPER, HELPER_SCRIPT, { mode: 0o755 });
+      try {
+        const src = path.join(this.app.vault.adapter.getBasePath(), this.manifest.dir, "watchdog.sh");
+        fs.writeFileSync(WATCHDOG, fs.readFileSync(src), { mode: 0o755 });
+      } catch (_) {}
     });
     // Copilot's own listeners differ per object; a cheap fingerprint of what
     // the phone shows is simpler and catches everything (messages, status,
@@ -66,6 +93,13 @@ module.exports = class IdroidBridge extends Plugin {
     this.registerInterval(window.setInterval(() => this.watch(), 400));
     this.tuned = new Set();
     this.registerInterval(window.setInterval(() => this.tunePhoneWindows(), 1500));
+    // Cleanup: chats the phone started (id → {close, sig, changed}) and the
+    // tailnet VS Code endpoint. Serving is assumed on at load (it outlives
+    // Obsidian), so it goes off if no phone shows up.
+    this.phoneChats = new Map();
+    this.vscodeServing = true;
+    this.lastPhoneWindow = Date.now();
+    this.registerInterval(window.setInterval(() => this.cleanup(), 30000));
   }
 
   onunload() {
@@ -137,6 +171,7 @@ module.exports = class IdroidBridge extends Plugin {
         const project = this.projectId(body.project);
         const session = await m.createSession(undefined, project === undefined ? m.activeProjectId : project);
         id = session.internalId;
+        this.phoneChats.set(id, { close: false, sig: "", changed: Date.now() });
         if (session.ready) await session.ready;
       }
       const ui = m.getChatUIState(id);
@@ -172,6 +207,13 @@ module.exports = class IdroidBridge extends Plugin {
     if (req.method === "POST" && url.pathname === "/vscode") {
       return this.json(res, 200, await this.vscode(body.folder));
     }
+    if (req.method === "POST" && url.pathname === "/close") {
+      // The phone closed a tab: its chats close once their turn is over.
+      const chat = this.phoneChats.get(body.session);
+      if (chat) chat.close = true;
+      this.cleanup();
+      return this.json(res, 200, { closing: !!chat });
+    }
     if (req.method === "POST" && url.pathname === "/open") {
       m.setActiveSession(body.session);
       return this.json(res, 200, {});
@@ -190,14 +232,10 @@ module.exports = class IdroidBridge extends Plugin {
     const pane = this.app.plugins.plugins["vscode-pane"];
     if (!pane || !pane.server) throw new Error("The VS Code Pane plugin isn't enabled in Obsidian");
     const base = new URL(await pane.server.ensure());
-    const cli = TAILSCALE_CLI.find((p) => fs.existsSync(p));
-    if (!cli) throw new Error("Tailscale CLI not found on this Mac");
-    const run = (args) => new Promise((resolve, reject) => {
-      require("child_process").execFile(cli, args, { timeout: 20000 }, (err, stdout, stderr) =>
-        err ? reject(new Error((stderr || err.message).trim())) : resolve(stdout));
-    });
-    await run(["serve", "--bg", `--https=${VSCODE_TAILNET_PORT}`, `http://127.0.0.1:${base.port}`]);
-    const status = JSON.parse(await run(["status", "--json"]));
+    await this.tailscale(["serve", "--bg", `--https=${VSCODE_TAILNET_PORT}`, `http://127.0.0.1:${base.port}`]);
+    this.vscodeServing = true;
+    this.lastPhoneWindow = Date.now();
+    const status = JSON.parse(await this.tailscale(["status", "--json"]));
     const host = String(status.Self.DNSName || "").replace(/\.$/, "");
     // Opens a folder (the vault unless the phone picked another), like the pane does.
     const vault = this.app.vault.adapter.getBasePath();
@@ -205,6 +243,49 @@ module.exports = class IdroidBridge extends Plugin {
     const url = new URL(`https://${host}:${VSCODE_TAILNET_PORT}${base.pathname}/`);
     url.searchParams.set("folder", target);
     return { url: url.toString(), folder: target, vault, home: os.homedir() };
+  }
+
+  tailscale(args) {
+    const cli = TAILSCALE_CLI.find((p) => fs.existsSync(p));
+    if (!cli) return Promise.reject(new Error("Tailscale CLI not found on this Mac"));
+    return new Promise((resolve, reject) => {
+      require("child_process").execFile(cli, args, { timeout: 20000 }, (err, stdout, stderr) =>
+        err ? reject(new Error((stderr || err.message).trim())) : resolve(stdout));
+    });
+  }
+
+  /**
+   * What the phone leaves behind on this Mac:
+   * - chats it created: closed when the phone closed their tab (POST /close)
+   *   or after PHONE_CHAT_IDLE_MS without changes, never mid-turn, never the
+   *   chat open on the Mac (Copilot closes that one itself when it's left);
+   * - VS Code: `tailscale serve` off once no phone window has been connected
+   *   for VSCODE_SERVE_IDLE_MS (VS Code Pane drops a window 2 min after its
+   *   last poll). POST /vscode turns it back on.
+   */
+  cleanup() {
+    const now = Date.now();
+    let m = null;
+    try { m = this.copilot(); } catch (_) {}
+    if (m) {
+      for (const [id, chat] of this.phoneChats) {
+        const s = m.getSession(id);
+        if (!s || s.getStatus() === "closed") { this.phoneChats.delete(id); continue; }
+        const ui = m.getChatUIState(id);
+        const msgs = ui ? ui.getMessages() : [];
+        const sig = [s.getStatus(), msgs.length, msgs.length ? (msgs[msgs.length - 1].message || "").length : 0].join(":");
+        if (sig !== chat.sig) { chat.sig = sig; chat.changed = now; }
+        if (id === m.activeSessionId || BUSY.has(s.getStatus()) || s.getPendingToolPermissions().length) continue;
+        if (chat.close || now - chat.changed > PHONE_CHAT_IDLE_MS) {
+          this.phoneChats.delete(id);
+          m.closeSession(id).catch((e) => console.warn("Idroid Bridge: closing a phone chat failed", e));
+        }
+      }
+    }
+    if (this.vscodeServing && now - this.lastPhoneWindow > VSCODE_SERVE_IDLE_MS) {
+      this.vscodeServing = false;
+      this.tailscale(["serve", `--https=${VSCODE_TAILNET_PORT}`, "off"]).catch(() => {});
+    }
   }
 
   /**
@@ -217,8 +298,11 @@ module.exports = class IdroidBridge extends Plugin {
     const pane = this.app.plugins.plugins["vscode-pane"];
     const server = pane && pane.server;
     if (!server || !server.clients) return;
+    for (const id of this.tuned) if (!server.clients.has(id)) this.tuned.delete(id);
     for (const [id, client] of server.clients) {
-      if (this.tuned.has(id) || !client.authority || /^(127\.0\.0\.1|localhost)(:|$)/.test(client.authority)) continue;
+      if (!client.authority || /^(127\.0\.0\.1|localhost)(:|$)/.test(client.authority)) continue;
+      this.lastPhoneWindow = Date.now();
+      if (this.tuned.has(id)) continue;
       this.tuned.add(id);
       client.queue.push({ type: "perf", settings: PHONE_VSCODE_SETTINGS });
       for (const cmd of PHONE_VSCODE_COMMANDS) client.queue.push({ type: "command", id: cmd });

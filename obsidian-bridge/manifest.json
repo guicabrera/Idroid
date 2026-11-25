@@ -1,7 +1,7 @@
 {
   "id": "idroid-bridge",
   "name": "Idroid Bridge",
-  "version": "0.7.0",
+  "version": "0.9.0",
   "minAppVersion": "1.11.4",
   "description": "Lets the Idroid phone app use Copilot's agent chat on this Mac (ADR-0006).",
   "author": "Guilherme Cabrera",

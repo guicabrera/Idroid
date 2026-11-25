@@ -85,6 +85,9 @@ struct RemoteCopilotView: View {
     @State private var history: [CopilotSavedChat]?
     @State private var showHistory = false
     @State private var resuming = false
+    /// Chats this window used: closed on the other Mac with the window (the
+    /// bridge only closes the ones it created, after their turn).
+    @State private var used: Set<String> = []
     @FocusState private var inputFocused: Bool
 
     private var bridge: BridgeClient { BridgeClient(api: appState.apiClient, config: pairing, deviceID: device.id) }
@@ -116,6 +119,11 @@ struct RemoteCopilotView: View {
         .toolbar { toolbar }
         .onAppear { newChat = startNew; inputFocused = true }
         .task(id: "\(sessionID ?? "-")#\(reload)") { await poll() }
+        .onChange(of: sessionID) { _, id in if let id = safeID(id) { used.insert(id) } }
+        .onDisappear {
+            let bridge = bridge, used = used
+            Task.detached { for id in used { _ = try? await bridge.call("POST", "/close", body: ["session": id]) } }
+        }
         .sheet(isPresented: $showHistory) { historySheet }
     }
 

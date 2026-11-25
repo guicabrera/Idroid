@@ -26,8 +26,11 @@ import (
 const fsResponseTimeout = 20 * time.Second
 
 type fsReply struct {
-	r    *http.Request
-	done chan struct{}
+	r *http.Request
+	// done gets whether the caller received the whole body.
+	done chan bool
+	// abort unblocks a read of r.Body when the caller goes away mid-stream.
+	abort func()
 }
 
 type fsPending struct {
@@ -181,7 +184,8 @@ wait:
 			}
 		}
 	}
-	defer close(reply.done)
+	delivered := false
+	defer func() { reply.done <- delivered }()
 
 	status := http.StatusOK
 	if v, err := strconv.Atoi(reply.r.Header.Get("X-Idroid-Status")); err == nil && v >= 200 && v < 600 {
@@ -200,11 +204,23 @@ wait:
 
 	if op == "exec" {
 		// Command output is shown as it is produced: flush every chunk
-		// instead of letting the response buffer hold it back.
+		// instead of letting the response buffer hold it back. A quiet
+		// command (claude -p) blocks the copy on the target's next chunk, so
+		// a caller that leaves is watched for here, not on the next write.
+		copied := make(chan struct{})
+		go func() {
+			select {
+			case <-r.Context().Done():
+				reply.abort()
+			case <-copied:
+			}
+		}()
 		n, err = copyFlushing(w, reply.r.Body)
+		close(copied)
 	} else {
 		n, err = io.Copy(w, reply.r.Body)
 	}
+	delivered = err == nil
 	if err != nil {
 		log.Printf("fs %s %s -> %s: status %d, copy failed after %d bytes: %v", op, caller.ID, targetID, status, n, err)
 	} else {
@@ -215,7 +231,8 @@ wait:
 // handleFSRespond serves POST /fs/respond/{request_id}: the target device's
 // answer to an fs_request. Headers: X-Idroid-Status (status for the caller,
 // default 200), Content-Type, optional Content-Disposition; body is passed
-// through as is. It returns once the body has been relayed.
+// through as is. It returns once the body has been relayed: 204, or 410 if
+// the caller went away first, so the target stops the work (a command).
 func (s *Server) handleFSRespond(w http.ResponseWriter, r *http.Request) {
 	responder := deviceFromContext(r)
 	pending, ok := s.fs.claim(r.PathValue("request_id"), responder.ID)
@@ -223,9 +240,14 @@ func (s *Server) handleFSRespond(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "request not found or expired", http.StatusGone)
 		return
 	}
-	done := make(chan struct{})
-	pending.reply <- fsReply{r: r, done: done}
-	<-done
+	rc := http.NewResponseController(w)
+	done := make(chan bool, 1)
+	pending.reply <- fsReply{r: r, done: done, abort: func() { _ = rc.SetReadDeadline(time.Now()) }}
+	if !<-done {
+		w.Header().Set("Connection", "close")
+		http.Error(w, "caller went away", http.StatusGone)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

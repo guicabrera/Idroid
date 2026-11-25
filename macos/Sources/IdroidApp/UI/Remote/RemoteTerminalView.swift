@@ -36,6 +36,8 @@ struct RemoteTerminalView: View {
             await model.loadCatalog()
             inputFocused = true
         }
+        // Closing the window stops what it started on the other Mac.
+        .onDisappear { model.stop() }
         .sheet(item: $actionInput) { action in
             VStack(alignment: .leading, spacing: 12) {
                 Text(action.name).font(.headline)

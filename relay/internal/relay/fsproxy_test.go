@@ -1,10 +1,12 @@
 package relay
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -160,5 +162,77 @@ func TestFSUploadIsPulledByTarget(t *testing.T) {
 	}
 	if code := call(t, srv, "GET", "/fs/pull/nope", phone.Token, nil, nil); code != http.StatusGone {
 		t.Fatalf("pulling an unknown upload: %d, want 410", code)
+	}
+}
+
+// A command that prints a line and then goes quiet (claude -p): when the
+// phone leaves, the target's upload is answered 410 right away, not on its
+// next chunk, so it stops the command.
+func TestFSExecCallerLeavingStopsTarget(t *testing.T) {
+	srv := newTestServer(t)
+	mac, phone := pair(t, srv, "", "mac", "", "phone")
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws?token=" + mac.Token
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	answered := make(chan int, 1)
+	go func() {
+		var event NotifyEvent
+		for event.Event != "fs_request" {
+			if err := conn.ReadJSON(&event); err != nil {
+				return
+			}
+		}
+		pull, _ := http.NewRequest("GET", srv.URL+"/fs/pull/"+event.RequestID, nil)
+		pull.Header.Set("Authorization", "Bearer "+mac.Token)
+		if resp, err := http.DefaultClient.Do(pull); err == nil {
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+		}
+		out, w := io.Pipe()
+		defer w.Close()
+		go w.Write([]byte("started\n")) // then nothing: the command is thinking
+		req, _ := http.NewRequest("POST", srv.URL+"/fs/respond/"+event.RequestID, out)
+		req.Header.Set("Authorization", "Bearer "+mac.Token)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			answered <- 0
+			return
+		}
+		resp.Body.Close()
+		answered <- resp.StatusCode
+	}()
+	for i := 0; i < 100; i++ {
+		var resp devicesResponse
+		call(t, srv, "GET", "/devices", phone.Token, nil, &resp)
+		if len(resp.Devices) == 1 && resp.Devices[0].Online {
+			break
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req, _ := http.NewRequestWithContext(ctx, "PUT", srv.URL+"/fs/"+mac.ID+"/exec", strings.NewReader(`{"command":"claude -p hi"}`))
+	req.Header.Set("Authorization", "Bearer "+phone.Token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := make([]byte, 8)
+	if _, err := io.ReadFull(resp.Body, line); err != nil || string(line) != "started\n" {
+		t.Fatalf("first chunk: %q %v", line, err)
+	}
+	cancel() // the phone closes the tab
+	resp.Body.Close()
+
+	select {
+	case code := <-answered:
+		if code != http.StatusGone && code != 0 {
+			t.Fatalf("target's upload answered %d, want 410 (or a dropped connection)", code)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("target kept streaming after the caller left")
 	}
 }
