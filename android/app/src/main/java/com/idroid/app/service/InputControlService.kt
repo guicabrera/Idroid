@@ -346,7 +346,47 @@ class InputControlService : AccessibilityService() {
         })
     }
 
+    /**
+     * Android 13+: type through the focused field's InputConnection, exactly
+     * like a keyboard (commitText at the cursor, real key events). No reading
+     * and rewriting the field, so placeholders that apps report as text
+     * (WhatsApp's "Mensagem") can't leak in. Null before 13 or with no field.
+     */
+    private fun imeConnection(): android.accessibilityservice.InputMethod.AccessibilityInputConnection? =
+        if (android.os.Build.VERSION.SDK_INT >= 33) inputMethod?.currentInputConnection else null
+
+    private fun imeKey(code: Int, meta: Int = 0): Boolean {
+        if (android.os.Build.VERSION.SDK_INT < 33) return false
+        val ic = imeConnection() ?: return false
+        val now = SystemClock.uptimeMillis()
+        ic.sendKeyEvent(android.view.KeyEvent(now, now, android.view.KeyEvent.ACTION_DOWN, code, 0, meta))
+        ic.sendKeyEvent(android.view.KeyEvent(now, now, android.view.KeyEvent.ACTION_UP, code, 0, meta))
+        return true
+    }
+
+    private fun imeHandled(k: String): Boolean {
+        if (android.os.Build.VERSION.SDK_INT < 33 || imeConnection() == null) return false
+        val ic = imeConnection()!!
+        return when (k) {
+            "backspace" -> imeKey(android.view.KeyEvent.KEYCODE_DEL)
+            "delete" -> imeKey(android.view.KeyEvent.KEYCODE_FORWARD_DEL)
+            "enter" -> imeKey(android.view.KeyEvent.KEYCODE_ENTER)
+            "tab" -> imeKey(android.view.KeyEvent.KEYCODE_TAB)
+            "left" -> imeKey(android.view.KeyEvent.KEYCODE_DPAD_LEFT)
+            "right" -> imeKey(android.view.KeyEvent.KEYCODE_DPAD_RIGHT)
+            "up" -> imeKey(android.view.KeyEvent.KEYCODE_DPAD_UP)
+            "down" -> imeKey(android.view.KeyEvent.KEYCODE_DPAD_DOWN)
+            "lineStart" -> imeKey(android.view.KeyEvent.KEYCODE_MOVE_HOME)
+            "lineEnd" -> imeKey(android.view.KeyEvent.KEYCODE_MOVE_END)
+            "selectAll" -> { ic.performContextMenuAction(android.R.id.selectAll); true }
+            else -> false
+        }
+    }
+
     private fun typeText(s: String) {
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            imeConnection()?.let { it.commitText(s, 1, null); return }
+        }
         val node = focusedField() ?: return
         val text = currentText(node)
         val (a, b) = selection(node, text)
@@ -360,6 +400,7 @@ class InputControlService : AccessibilityService() {
             "recents" -> { performGlobalAction(GLOBAL_ACTION_RECENTS); return }
             "notifications" -> { performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS); return }
         }
+        if (imeHandled(k)) return
         val node = focusedField() ?: return
         val text = currentText(node)
         val (a, b) = selection(node, text)
