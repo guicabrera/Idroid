@@ -1,5 +1,18 @@
 package com.idroid.app.ui
 
+import android.app.Activity
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material.icons.filled.FullscreenExit
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -56,6 +69,7 @@ private sealed interface TermTab {
     class Shell(override val id: Int, override val title: String) : TermTab
     class Ssh(override val id: Int, override val title: String, val catalog: CommandCatalog) : TermTab
     class VsCode(override val id: Int, override val title: String) : TermTab
+    class Copilot(override val id: Int, override val title: String, val startNew: Boolean) : TermTab
 }
 
 /**
@@ -74,6 +88,21 @@ fun TerminalTabs(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit)
     val tabs = remember { mutableStateListOf<TermTab>(TermTab.Shell(1, "Terminal 1")) }
     var selected by remember { mutableIntStateOf(1) }
     var addMenu by remember { mutableStateOf(false) }
+    // Full screen: no tab row, no title bars, no system bars — just the terminal/VS Code.
+    var fullscreen by remember { mutableStateOf(false) }
+    val view = LocalView.current
+    DisposableEffect(fullscreen) {
+        val window = (view.context as? Activity)?.window
+        val bars = window?.let { WindowCompat.getInsetsController(it, view) }
+        if (fullscreen) {
+            // Bars come back over the content with a swipe from the edge, then hide again.
+            bars?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            bars?.hide(WindowInsetsCompat.Type.systemBars())
+        } else {
+            bars?.show(WindowInsetsCompat.Type.systemBars())
+        }
+        onDispose { bars?.show(WindowInsetsCompat.Type.systemBars()) }
+    }
 
     fun addShell() {
         shells++
@@ -84,6 +113,16 @@ fun TerminalTabs(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit)
     fun addSsh(catalog: CommandCatalog) {
         sshes++
         tabs += TermTab.Ssh(nextId, "SSH $sshes", catalog).also { selected = it.id }
+        nextId++
+    }
+
+    var copilots by remember { mutableIntStateOf(0) }
+
+    /** The first Copilot tab shows the Mac's open chat; later ones start a new chat. */
+    fun addCopilot() {
+        copilots++
+        tabs += TermTab.Copilot(nextId, "Copilot $copilots", startNew = tabs.any { it is TermTab.Copilot })
+            .also { selected = it.id }
         nextId++
     }
 
@@ -99,8 +138,9 @@ fun TerminalTabs(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit)
         if (selected == tab.id) selected = tabs[(index - 1).coerceAtLeast(0)].id
     }
 
+    Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
-        Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
+        if (!fullscreen) Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
             Row(Modifier.fillMaxWidth().statusBarsPadding(), verticalAlignment = Alignment.CenterVertically) {
                 val selectedIndex = tabs.indexOfFirst { it.id == selected }.coerceAtLeast(0)
                 ScrollableTabRow(
@@ -123,7 +163,12 @@ fun TerminalTabs(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit)
                             text = {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(
-                                        when (tab) { is TermTab.Ssh -> Icons.Filled.Computer; is TermTab.VsCode -> Icons.Filled.Code; else -> Icons.Filled.Terminal },
+                                        when (tab) {
+                                            is TermTab.Ssh -> Icons.Filled.Computer
+                                            is TermTab.VsCode -> Icons.Filled.Code
+                                            is TermTab.Copilot -> Icons.Filled.SmartToy
+                                            else -> Icons.Filled.Terminal
+                                        },
                                         null, Modifier.size(16.dp),
                                     )
                                     Text(" ${tab.title}", fontSize = 13.sp)
@@ -135,6 +180,7 @@ fun TerminalTabs(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit)
                         )
                     }
                 }
+                IconButton(onClick = { fullscreen = true }) { Icon(Icons.Filled.Fullscreen, "Full screen") }
                 Box {
                     IconButton(onClick = { addMenu = true }) { Icon(Icons.Filled.Add, "New tab") }
                     DropdownMenu(expanded = addMenu, onDismissRequest = { addMenu = false }) {
@@ -142,6 +188,11 @@ fun TerminalTabs(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit)
                             text = { Text("New terminal") },
                             leadingIcon = { Icon(Icons.Filled.Terminal, null) },
                             onClick = { addMenu = false; addShell() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Copilot") },
+                            leadingIcon = { Icon(Icons.Filled.SmartToy, null) },
+                            onClick = { addMenu = false; addCopilot() },
                         )
                         DropdownMenuItem(
                             text = { Text("VS Code") },
@@ -178,13 +229,30 @@ fun TerminalTabs(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit)
                                 onBack = onBack,
                                 active = active,
                                 onOpenSsh = ::addSsh,
+                                chrome = !fullscreen,
+                                onOpenCopilot = ::addCopilot,
                             )
-                            is TermTab.Ssh -> SshScreen(device, pairing, tab.catalog, onBack = { close(tab) }, active = active)
-                            is TermTab.VsCode -> VsCodeScreen(device, pairing, onBack = { close(tab) }, active = active)
+                            is TermTab.Ssh -> SshScreen(device, pairing, tab.catalog, onBack = { close(tab) }, active = active, chrome = !fullscreen)
+                            is TermTab.Copilot -> CopilotScreen(
+                                device, pairing, onBack = { close(tab) }, active = active,
+                                startNew = tab.startNew, chrome = !fullscreen,
+                            )
+                            is TermTab.VsCode -> VsCodeScreen(device, pairing, onBack = { close(tab) }, active = active, chrome = !fullscreen)
                         }
                     }
                 }
             }
         }
     }
+    if (fullscreen) {
+        // Small, translucent way out; Back also leaves full screen first.
+        IconButton(
+            onClick = { fullscreen = false },
+            modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(36.dp)
+                .background(Color.Black.copy(alpha = 0.35f), CircleShape),
+        ) { Icon(Icons.Filled.FullscreenExit, "Exit full screen", tint = Color.White, modifier = Modifier.size(20.dp)) }
+    }
+    }
+    // Registered after the tabs, so it takes Back before them.
+    BackHandler(enabled = fullscreen) { fullscreen = false }
 }

@@ -83,7 +83,14 @@ private const val HELPER = "\"\$HOME/.idroid/copilot\""
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CopilotScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit, active: Boolean = true) {
+fun CopilotScreen(
+    device: PeerDevice,
+    pairing: PairingConfig,
+    onBack: () -> Unit,
+    active: Boolean = true,
+    startNew: Boolean = false,
+    chrome: Boolean = true,
+) {
     BackHandler(enabled = active, onBack = onBack)
     val app = LocalContext.current.applicationContext as IdroidApplication
     val api = app.relayApiClient
@@ -93,6 +100,9 @@ fun CopilotScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit
     var state by remember { mutableStateOf<CopilotState?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var sessionId by remember { mutableStateOf<String?>(null) }
+    // Composing a new chat: show no conversation until the first message creates one
+    // (otherwise the Mac's open chat would be adopted).
+    var newChat by remember { mutableStateOf(startNew) }
     var input by remember { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
@@ -119,13 +129,14 @@ fun CopilotScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit
         var since = -1
         while (true) {
             val sid = sessionId?.takeIf { BRIDGE_ID.matches(it) }
-            val path = "/state?since=$since&wait=" + (if (since < 0) 0 else 25) + (sid?.let { "&session=$it" } ?: "")
+            val path = "/state?since=$since&wait=" + (if (since < 0) 0 else 25) +
+                (sid?.let { "&session=$it" } ?: if (newChat) "&session=new" else "")
             runCatching { json.decodeFromString<CopilotState>(call("GET", path).lines().last { it.startsWith("{") }) }
                 .onSuccess { s ->
                     error = null
                     state = s
                     since = s.version
-                    if (sessionId == null) sessionId = s.session?.id
+                    if (sessionId == null && !newChat) sessionId = s.session?.id
                 }
                 .onFailure {
                     error = it.message
@@ -150,7 +161,7 @@ fun CopilotScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit
             runCatching { post("/send", "session" to sessionId, "text" to text) }
                 .onSuccess { r ->
                     runCatching { json.decodeFromString<Map<String, String>>(r.lines().last { it.startsWith("{") })["session"] }
-                        .getOrNull()?.let { if (it != sessionId) sessionId = it else reload++ }
+                        .getOrNull()?.let { newChat = false; if (it != sessionId) sessionId = it else reload++ }
                 }
                 .onFailure { error = it.message; input = text }
             sending = false
@@ -175,7 +186,7 @@ fun CopilotScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit
                                         runCatching { post("/resume", "path" to c.path) }
                                             .onSuccess { r ->
                                                 runCatching { json.decodeFromString<Map<String, String>>(r.lines().last { it.startsWith("{") })["session"] }
-                                                    .getOrNull()?.let { sessionId = it; reload++ }
+                                                    .getOrNull()?.let { newChat = false; sessionId = it; reload++ }
                                                 showHistory = false
                                             }
                                             .onFailure { error = it.message }
@@ -197,7 +208,7 @@ fun CopilotScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit
 
     Scaffold(
         topBar = {
-            TopAppBar(
+            if (chrome) TopAppBar(
                 title = {
                     Box {
                         Row(Modifier.padding(end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -233,7 +244,7 @@ fun CopilotScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     },
-                                    onClick = { sessionId = s.id; menuOpen = false },
+                                    onClick = { newChat = false; sessionId = s.id; menuOpen = false },
                                 )
                             }
                         }
@@ -241,7 +252,7 @@ fun CopilotScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit
                 },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 actions = {
-                    IconButton(onClick = { sessionId = null; state = state?.copy(session = null); reload++ }) {
+                    IconButton(onClick = { newChat = true; sessionId = null; state = state?.copy(session = null); reload++ }) {
                         Icon(Icons.Filled.Add, "New chat")
                     }
                 },

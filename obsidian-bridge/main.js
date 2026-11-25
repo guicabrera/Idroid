@@ -239,7 +239,8 @@ module.exports = class IdroidBridge extends Plugin {
       backend: s.backendId,
       active: s.internalId === m.activeSessionId,
     }));
-    const id = sessionId || m.activeSessionId;
+    // "new" = the phone is composing a new chat: no conversation yet.
+    const id = sessionId === "new" ? null : sessionId || m.activeSessionId;
     const s = id ? m.getSession(id) : null;
     const ui = id ? m.getChatUIState(id) : null;
     let session = null;

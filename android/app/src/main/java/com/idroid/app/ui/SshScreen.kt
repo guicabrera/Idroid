@@ -77,7 +77,7 @@ private sealed interface SshState {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SshScreen(device: PeerDevice, pairing: PairingConfig, catalog: CommandCatalog, onBack: () -> Unit, active: Boolean = true) {
+fun SshScreen(device: PeerDevice, pairing: PairingConfig, catalog: CommandCatalog, onBack: () -> Unit, active: Boolean = true, chrome: Boolean = true) {
     BackHandler(enabled = active, onBack = onBack)
     val context = LocalContext.current
     val app = context.applicationContext as IdroidApplication
@@ -140,7 +140,7 @@ fun SshScreen(device: PeerDevice, pairing: PairingConfig, catalog: CommandCatalo
 
     Scaffold(
         topBar = {
-            TopAppBar(
+            if (chrome) TopAppBar(
                 title = {
                     Column {
                         Text("SSH · ${device.name}")

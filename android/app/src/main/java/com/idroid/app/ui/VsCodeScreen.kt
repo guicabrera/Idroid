@@ -68,7 +68,7 @@ private fun FolderPicker(current: Triple<String, String, String>?, onPick: (Stri
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun VsCodeScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit, active: Boolean = true) {
+fun VsCodeScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit, active: Boolean = true, chrome: Boolean = true) {
     val context = LocalContext.current
     val app = context.applicationContext as IdroidApplication
     var url by remember { mutableStateOf<String?>(null) }
@@ -124,8 +124,8 @@ fun VsCodeScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit,
 
     if (picker) FolderPicker(opened, onPick = { picker = false; folder = it; attempt++ }, onDismiss = { picker = false })
     Column(Modifier.fillMaxSize().imePadding()) {
-    // Folder bar: which folder this VS Code shows, tap to switch.
-    androidx.compose.foundation.layout.Row(
+    // Folder bar: which folder this VS Code shows, tap to switch (hidden in full screen).
+    if (chrome) androidx.compose.foundation.layout.Row(
         Modifier.fillMaxWidth().padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

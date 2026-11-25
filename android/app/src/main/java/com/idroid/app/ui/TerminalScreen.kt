@@ -179,6 +179,8 @@ fun TerminalScreen(
     onBack: () -> Unit,
     active: Boolean = true,
     onOpenSsh: ((CommandCatalog) -> Unit)? = null,
+    chrome: Boolean = true,
+    onOpenCopilot: (() -> Unit)? = null,
 ) {
     // Several tabs stay composed at once (TerminalTabs): only the visible one handles Back.
     BackHandler(enabled = active, onBack = onBack)
@@ -386,7 +388,8 @@ fun TerminalScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
+            // Full screen (TerminalTabs) hides the title bar to give the output the room.
+            if (chrome) TopAppBar(
                 title = {
                     Column {
                         Text(device.name)
@@ -396,7 +399,7 @@ fun TerminalScreen(
                 },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 actions = {
-                    IconButton(onClick = { copilotOpen = true }) { Icon(Icons.Filled.SmartToy, "Obsidian Copilot") }
+                    IconButton(onClick = { onOpenCopilot?.invoke() ?: run { copilotOpen = true } }) { Icon(Icons.Filled.SmartToy, "Obsidian Copilot") }
                     IconButton(onClick = { catalog?.let { c -> onOpenSsh?.invoke(c) ?: run { sshOpen = true } } }, enabled = catalog != null) { Icon(Icons.Filled.Computer, "SSH terminal (interactive)") }
                     IconButton(onClick = { scope.launch { loadCatalog() } }) { Icon(Icons.Filled.Refresh, "Reload commands") }
                     IconButton(onClick = { showAiSettings = true }) { Icon(Icons.Filled.Settings, "AI settings") }
