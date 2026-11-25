@@ -151,7 +151,7 @@ module.exports = class IdroidBridge extends Plugin {
       return this.json(res, 200, { session: m.activeSessionId });
     }
     if (req.method === "POST" && url.pathname === "/vscode") {
-      return this.json(res, 200, await this.vscode());
+      return this.json(res, 200, await this.vscode(body.folder));
     }
     if (req.method === "POST" && url.pathname === "/open") {
       m.setActiveSession(body.session);
@@ -167,7 +167,7 @@ module.exports = class IdroidBridge extends Plugin {
    * `tailscale serve`, which is idempotent. HTTPS matters: the proxy marks
    * cookies Secure and VS Code web needs a secure context.
    */
-  async vscode() {
+  async vscode(folder) {
     const pane = this.app.plugins.plugins["vscode-pane"];
     if (!pane || !pane.server) throw new Error("The VS Code Pane plugin isn't enabled in Obsidian");
     const base = new URL(await pane.server.ensure());
@@ -180,7 +180,12 @@ module.exports = class IdroidBridge extends Plugin {
     await run(["serve", "--bg", `--https=${VSCODE_TAILNET_PORT}`, `http://127.0.0.1:${base.port}`]);
     const status = JSON.parse(await run(["status", "--json"]));
     const host = String(status.Self.DNSName || "").replace(/\.$/, "");
-    return { url: `https://${host}:${VSCODE_TAILNET_PORT}${base.pathname}/` };
+    // Opens a folder (the vault unless the phone picked another), like the pane does.
+    const vault = this.app.vault.adapter.getBasePath();
+    const target = folder && fs.existsSync(folder) ? folder : vault;
+    const url = new URL(`https://${host}:${VSCODE_TAILNET_PORT}${base.pathname}/`);
+    url.searchParams.set("folder", target);
+    return { url: url.toString(), folder: target, vault, home: os.homedir() };
   }
 
   /** Saved agent chats (Copilot's history notes), most recently used first. */

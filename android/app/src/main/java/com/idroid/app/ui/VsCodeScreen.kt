@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
@@ -42,6 +44,28 @@ import kotlinx.serialization.json.jsonPrimitive
  * server if needed and publishes its proxy with `tailscale serve`; the URL
  * carries the proxy's secret prefix, which is all the auth the page needs.
  */
+@Composable
+private fun FolderPicker(current: Triple<String, String, String>?, onPick: (String?) -> Unit, onDismiss: () -> Unit) {
+    var custom by remember { mutableStateOf(current?.first ?: "") }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Open folder in VS Code") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                androidx.compose.material3.OutlinedButton(onClick = { onPick(null) }, modifier = Modifier.fillMaxWidth()) {
+                    Text("Obsidian vault")
+                }
+                current?.third?.let { home ->
+                    androidx.compose.material3.OutlinedButton(onClick = { onPick(home) }, modifier = Modifier.fillMaxWidth()) { Text("Home (~)") }
+                }
+                androidx.compose.material3.OutlinedTextField(custom, { custom = it }, label = { Text("Path on the Mac") }, singleLine = true)
+            }
+        },
+        confirmButton = { androidx.compose.material3.TextButton(onClick = { onPick(custom.trim().ifEmpty { null }) }) { Text("Open path") } },
+        dismissButton = { androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun VsCodeScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit, active: Boolean = true) {
@@ -50,6 +74,10 @@ fun VsCodeScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit,
     var url by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var attempt by remember { mutableIntStateOf(0) }
+    // Folder VS Code opens; null = the vault (the bridge's default).
+    var folder by remember { mutableStateOf<String?>(null) }
+    var opened by remember { mutableStateOf<Triple<String, String, String>?>(null) } // folder, vault, home
+    var picker by remember { mutableStateOf(false) }
 
     val web = remember {
         WebView(context).apply {
@@ -68,19 +96,23 @@ fun VsCodeScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit,
     // Back walks VS Code's own history first, then closes the tab.
     BackHandler(enabled = active) { if (web.canGoBack()) web.goBack() else onBack() }
 
-    LaunchedEffect(attempt) {
+    LaunchedEffect(attempt, folder) {
         error = null
         url = null
         val out = StringBuilder()
         runCatching {
             val result = app.relayApiClient.execCommand(
                 pairing, device.id,
-                ExecRequest(command = "\"\$HOME/.idroid/copilot\" POST '/vscode' \"\$1\"", input = "{}"),
+                ExecRequest(
+                    command = "\"\$HOME/.idroid/copilot\" POST '/vscode' \"\$1\"",
+                    input = kotlinx.serialization.json.buildJsonObject { folder?.let { put("folder", kotlinx.serialization.json.JsonPrimitive(it)) } }.toString(),
+                ),
             ) { out.append(it) }
             val line = out.lines().lastOrNull { it.startsWith("{") } ?: throw IllegalStateException(out.toString().trim())
             val obj = Json.parseToJsonElement(line).jsonObject
             obj["error"]?.let { throw IllegalStateException(it.jsonPrimitive.content) }
             if (result.exit != 0) throw IllegalStateException(out.toString().trim())
+            opened = Triple(obj["folder"]!!.jsonPrimitive.content, obj["vault"]!!.jsonPrimitive.content, obj["home"]!!.jsonPrimitive.content)
             obj["url"]!!.jsonPrimitive.content
         }.onSuccess {
             url = it
@@ -90,7 +122,19 @@ fun VsCodeScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit,
         }
     }
 
-    Box(Modifier.fillMaxSize().imePadding()) {
+    if (picker) FolderPicker(opened, onPick = { picker = false; folder = it; attempt++ }, onDismiss = { picker = false })
+    Column(Modifier.fillMaxSize().imePadding()) {
+    // Folder bar: which folder this VS Code shows, tap to switch.
+    androidx.compose.foundation.layout.Row(
+        Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        androidx.compose.material3.TextButton(onClick = { picker = true }) {
+            androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Filled.FolderOpen, null)
+            Text("  " + (opened?.let { (f, v, _) -> if (f == v) "Vault" else f.substringAfterLast('/') } ?: "…"), maxLines = 1)
+        }
+    }
+    Box(Modifier.weight(1f).fillMaxWidth()) {
         AndroidView(factory = { web }, modifier = Modifier.fillMaxSize())
         when {
             error != null -> Column(
@@ -111,5 +155,6 @@ fun VsCodeScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit,
                 Text("Starting VS Code on ${device.name}…", Modifier.padding(top = 12.dp))
             }
         }
+    }
     }
 }
