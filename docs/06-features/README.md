@@ -4,7 +4,7 @@ tags:
   - documentation
   - features
 created: 2026-10-09
-modified: 2026-10-09
+modified: 2026-11-24
 status: active
 ---
 
@@ -16,7 +16,11 @@ status: active
 
 | Document | Description |
 |-----------|-------------|
-| _To be added_ | Add one descriptive feature specification per document, for example `feature-name-spec.md`. |
+| [Remote terminal](./remote-terminal-spec.md) | Terminal and named commands on a Mac, autocomplete, AI agent, Claude Code mode, tabs. |
+| [SSH terminal](./ssh-terminal-spec.md) | Interactive shell over Tailscale with automatic key setup. |
+| [Obsidian Copilot on the phone](./copilot-on-phone-spec.md) | The Mac's Copilot agent chats, live and saved, with permission prompts. |
+| [VS Code on the phone](./vscode-on-phone-spec.md) | VS Code Pane's VS Code over Tailscale, opening the vault. |
+| [Background sync on Android](./background-sync-spec.md) | How the sync service survives recents, reboots and updates. |
 
 ## Related
 

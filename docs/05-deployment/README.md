@@ -4,7 +4,7 @@ tags:
   - documentation
   - deployment
 created: 2026-10-09
-modified: 2026-10-09
+modified: 2026-11-24
 status: active
 ---
 
@@ -16,7 +16,7 @@ status: active
 
 | Document | Description |
 |-----------|-------------|
-| _To be added_ | Add release procedures, environment configuration, and rollback runbooks here. |
+| [Release guide](./release-guide.md) | Building and shipping the Android app, macOS app, relay and Idroid Bridge plugin. |
 
 ## Related
 

@@ -5,6 +5,7 @@ Compartilha arquivos, texto e área de transferência entre Android, Mac (e futu
 - `relay/` — servidor Go (podman), roda no Mac mini via Tailscale: `http://guilhermes-mac-mini-1.tail56ad8e.ts.net:8443`
 - `macos/` — app SwiftUI (macOS 14+), Swift Package
 - `android/` — app Kotlin/Compose
+- `obsidian-bridge/` — plugin do Obsidian (Idroid Bridge): Copilot e VS Code no celular (ADR-0006/0007)
 - `docs/` — documentação e ADRs
 
 ## Build
@@ -43,3 +44,17 @@ cd relay
 go test ./...
 podman compose up -d --build --force-recreate   # sem --force-recreate o container antigo continua rodando
 ```
+
+### Release do Android
+
+`scripts/release-android.sh <versão>` — build + lint, tag `android-vX`, GitHub Release com o APK. Detalhes em
+`docs/05-deployment/release-guide.md`.
+
+### Idroid Bridge (plugin do Obsidian)
+
+```bash
+cp obsidian-bridge/{manifest.json,main.js} ../../.obsidian/plugins/idroid-bridge/   # depois desativar/ativar no Obsidian
+~/.idroid/copilot GET /state                                                       # teste
+```
+
+Usa API interna do Copilot (testado no 4.0.18): retestar após atualizar o Copilot.

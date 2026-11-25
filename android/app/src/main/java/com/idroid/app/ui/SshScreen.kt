@@ -126,6 +126,8 @@ fun SshScreen(device: PeerDevice, pairing: PairingConfig, catalog: CommandCatalo
             state = SshState.Connected
             view.showKeyboard()
         } catch (e: Exception) {
+            // The key may have been removed from authorized_keys: authorize it again on retry.
+            if (e.message.orEmpty().contains("Auth fail")) prefs.edit().remove("ssh.authorized.${device.id}").apply()
             state = SshState.Failed(
                 (e.message ?: e.javaClass.simpleName) +
                     "\n\nThis phone connects straight to $host over Tailscale: check that Tailscale is on here."

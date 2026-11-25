@@ -4,15 +4,20 @@ Kotlin + Jetpack Compose client for [ADR-0001](../docs/03-architecture/ADR-0001-
 
 ## What's in this first increment
 
-- **Pairing** (`PairingScreen.kt` / `PairingRepository.kt`): three ways in, per [relay/README.md](../relay/README.md#api) — "Start pairing" generates a 6-digit code on this phone and polls until the other device claims it; "Join with code" enters a code shown by the other device; "Manual" is the old fallback of pasting values minted via `POST /admin/devices`, kept for scripting. Pairing config (including the device token) is stored in `EncryptedSharedPreferences`. QR code pairing (encoding the same code into a scannable image) is still open per the Project Vision's feature priority list.
+- **Pairing** (`PairingScreen.kt` / `PairingRepository.kt`): three ways in, per [relay/README.md](../relay/README.md#api) — "Start pairing" generates a 6-digit code on this phone and polls until the other device claims it; "Join with code" enters a code shown by the other device; "Manual" is the old fallback of pasting values minted via `POST /admin/devices`, kept for scripting. Pairing config (including the device token) is stored in `EncryptedSharedPreferences`. QR code pairing is covered below.
 - **Share Sheet target** (`ShareReceiverActivity.kt`): registers for `ACTION_SEND` / `ACTION_SEND_MULTIPLE` so "Idroid" shows up like any other app in Android's share menu, for both files and plain text/links.
 - **Home screen** (`HomeScreen.kt`): send a quick text/link, pick a file to send, and list/download/delete whatever is sitting in this device's relay inbox.
 - **Always-on push** (`RelaySyncService.kt`): a foreground service (with a persistent low-priority notification) that holds the relay's websocket open and raises a notification when something new lands, instead of relying on polling.
 - **Automatic clipboard sync** (ADR-0002): `ClipboardAccessibilityService.kt` registers a clipboard listener (its only purpose — it never inspects accessibility events or the UI tree) so copies made by *any* app, in the background, get pushed to the paired device as `kind=clipboard` items. `RelaySyncService` applies incoming clipboard pushes to this phone's clipboard and deletes them from the relay — they never show up as inbox entries (filtered out in `IdroidViewModel.refreshInbox`). Content flagged `ClipDescription.EXTRA_IS_SENSITIVE` (password managers, OTP autofill) is never synced. Echo-loop prevention: `IdroidApplication.clipboardSyncState` tracks the hash of the last value this device *applied* from a remote push, so the listener recognizes its own echo instead of re-uploading it. The Accessibility Service can't be enabled programmatically — `HomeScreen.kt` shows a banner linking to Settings until the user turns it on once.
+- **Remote terminal on a Mac** ([spec](../docs/06-features/remote-terminal-spec.md)): terminal with autocomplete, the Mac's named commands, an AI agent (Anthropic/OpenAI/Google, model picked from the provider's list) and a Claude Code mode in the vault, in tabs that survive rotation.
+- **SSH terminal** ([spec](../docs/06-features/ssh-terminal-spec.md)): interactive shell over Tailscale (Termux emulator + JSch), key installed on the Mac automatically.
+- **Obsidian Copilot** ([spec](../docs/06-features/copilot-on-phone-spec.md)) and **VS Code** ([spec](../docs/06-features/vscode-on-phone-spec.md)) from the Mac, through the Idroid Bridge plugin.
+- **Background sync** ([spec](../docs/06-features/background-sync-spec.md)): the service restarts after being swiped from recents, reboots and updates.
+- **Releases:** `scripts/release-android.sh` ([release guide](../docs/05-deployment/release-guide.md)).
 
 ## What's deliberately not here yet
 
-- **QR code pairing** — the PIN flow is implemented (see above); encoding the code into a scannable QR image, and scanning one with the camera, is still open.
+- **QR code pairing** is done: the Mac shows `idroid://pair?relay=…&code=…` as a QR code; the phone scans it with Google's code scanner (no camera permission) or the system camera (deep link, `PairingLink.kt`).
 
 ## Building
 

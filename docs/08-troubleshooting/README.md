@@ -4,7 +4,7 @@ tags:
   - documentation
   - troubleshooting
 created: 2026-10-09
-modified: 2026-10-09
+modified: 2026-11-24
 status: active
 ---
 
@@ -16,7 +16,7 @@ status: active
 
 | Document | Description |
 |-----------|-------------|
-| _To be added_ | Add one symptom-focused runbook per document. Use the [troubleshooting template](../10-resources/templates/troubleshooting-template.md). |
+| [Terminal, SSH, Copilot and VS Code](./remote-access-troubleshooting.md) | Errors in the phone's remote features on a Mac. |
 
 ## Related
 

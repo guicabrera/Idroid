@@ -8,10 +8,11 @@ Swift + SwiftUI client for [ADR-0001](../docs/03-architecture/ADR-0001-transport
 - **Home view** (`HomeView.swift`): send a quick text/link, pick a file to send (`NSOpenPanel`), and list/download/delete whatever is sitting in this device's relay inbox.
 - **Always-on push** (`RelaySyncController.swift` + the `MenuBarExtra` in `IdroidApp.swift`): holds the relay's websocket open and refreshes the inbox (and posts a system notification, when running as a packaged app — see below) whenever something new lands, instead of relying on polling. The menu bar icon is the macOS equivalent of the Android foreground service's persistent notification: a visible reminder that sync is live.
 - **Automatic clipboard sync** (ADR-0002): `ClipboardSyncController.swift` polls `NSPasteboard.general.changeCount` once a second (no special permission needed on macOS, unlike Android) and pushes new text/link copies to the paired device as `kind=clipboard` items. `AppState.refreshInbox` applies incoming clipboard pushes straight to this Mac's pasteboard and deletes them from the relay — they never show up as inbox entries. Copies tagged with the de facto `org.nspasteboard.ConcealedType` marker (several password managers set this) are never synced. Echo-loop prevention: `noteAppliedRemoteContent` records the change count and content hash right after applying a remote push, so the next poll tick recognizes its own echo instead of re-uploading it.
+- **Commands for paired devices** ([remote commands API](../docs/07-api-reference/remote-commands-api.md)): `CommandResponder.swift` answers the phone's terminal — free commands (Settings → Commands, on by default), named commands with presets, completion, an SSH catalog (tailnet name, user, Remote Login) and the Obsidian vault path. Every run is logged to `~/Library/Logs/Idroid/commands.log`.
 
 ## What's deliberately not here yet
 
-- **QR code pairing** — the PIN flow is implemented (see above); encoding the code into a scannable QR image is still open.
+- **QR code pairing** is done: "Start pairing" also shows the code as a QR code (`PairingQRCode.swift`) encoding `idroid://pair?relay=…&code=…`.
 - **Services menu integration** — the Share menu is covered (see below); a Services menu entry is not.
 
 ## Share menu
