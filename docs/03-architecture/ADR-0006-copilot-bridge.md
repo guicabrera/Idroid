@@ -32,4 +32,4 @@ The phone's Claude Code mode (ADR-0005) works in the vault but lacks what Copilo
 - **Positive:** the real Copilot chat from the phone — tools, instructions, history and diffs land on the Mac exactly as if typed there.
 - **Risk:** private API. A Copilot update can rename these members; the bridge then fails with an error on the phone, nothing else breaks. Re-check after Copilot updates.
 - **Risk:** same trust as the ADR-0005 terminal: anyone with the phone token can drive Copilot.
-- **Limitations:** needs Obsidian open on the Mac; lists the live chats only (saved history that isn't open yet isn't listed); replies refresh per change, not token by token.
+- **Limitations:** needs Obsidian open on the Mac; replies refresh per change, not token by token. Saved chats (`GET /history`, `POST /resume` via `getChatHistoryItems` and `loadChatById`) reopen on the Mac too, as the Navigator does.

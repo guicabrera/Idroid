@@ -135,11 +135,33 @@ module.exports = class IdroidBridge extends Plugin {
       if (ui) await ui.cancel();
       return this.json(res, 200, {});
     }
+    if (req.method === "GET" && url.pathname === "/history") {
+      return this.json(res, 200, { chats: await this.history() });
+    }
+    if (req.method === "POST" && url.pathname === "/resume") {
+      // Reopens a saved agent chat the way the Copilot Navigator does; Copilot
+      // makes it the active chat on the Mac too.
+      const chat = (await this.history()).find((c) => c.path === body.path);
+      if (!chat) return this.json(res, 404, { error: "saved chat not found" });
+      await this.app.plugins.plugins.copilot.loadChatById(chat.path);
+      this.watch();
+      return this.json(res, 200, { session: m.activeSessionId });
+    }
     if (req.method === "POST" && url.pathname === "/open") {
       m.setActiveSession(body.session);
       return this.json(res, 200, {});
     }
     return this.json(res, 404, { error: "unknown endpoint" });
+  }
+
+  /** Saved agent chats (Copilot's history notes), most recently used first. */
+  async history() {
+    const items = await this.app.plugins.plugins.copilot.getChatHistoryItems();
+    return items
+      .filter((i) => i.backendId) // agent chats; Quick Chat history has no backend
+      .map((i) => ({ path: i.id, title: i.title || i.id, lastUsed: new Date(i.lastAccessedAt || i.createdAt || 0).getTime(), backend: i.backendId }))
+      .sort((a, b) => b.lastUsed - a.lastUsed)
+      .slice(0, 100);
   }
 
   state(m, sessionId) {

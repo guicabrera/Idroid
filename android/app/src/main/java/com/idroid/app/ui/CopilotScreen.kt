@@ -2,6 +2,7 @@ package com.idroid.app.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -96,6 +97,9 @@ fun CopilotScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit
     var sending by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
     var reload by remember { mutableIntStateOf(0) }
+    var history by remember { mutableStateOf<List<com.idroid.app.data.CopilotSavedChat>?>(null) }
+    var showHistory by remember { mutableStateOf(false) }
+    var resuming by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
     /** Runs the helper; [body] travels as "$1", never spliced into the command. */
@@ -153,6 +157,44 @@ fun CopilotScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit
         }
     }
 
+    if (showHistory) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { if (!resuming) showHistory = false },
+            title = { Text("Saved Copilot chats") },
+            text = {
+                val list = history
+                when {
+                    list == null || resuming -> Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                    list.isEmpty() -> Text("No saved agent chats.")
+                    else -> LazyColumn {
+                        items(list, key = { it.path }) { c ->
+                            androidx.compose.material3.ListItem(
+                                modifier = Modifier.clickable {
+                                    resuming = true
+                                    scope.launch {
+                                        runCatching { post("/resume", "path" to c.path) }
+                                            .onSuccess { r ->
+                                                runCatching { json.decodeFromString<Map<String, String>>(r.lines().last { it.startsWith("{") })["session"] }
+                                                    .getOrNull()?.let { sessionId = it; reload++ }
+                                                showHistory = false
+                                            }
+                                            .onFailure { error = it.message }
+                                        resuming = false
+                                    }
+                                },
+                                headlineContent = { Text(c.title, maxLines = 2) },
+                                supportingContent = {
+                                    Text(android.text.format.DateUtils.getRelativeTimeSpanString(c.lastUsed).toString(), fontSize = 12.sp)
+                                },
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showHistory = false }, enabled = !resuming) { Text("Close") } },
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -169,6 +211,19 @@ fun CopilotScreen(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit
                             IconButton(onClick = { menuOpen = true }) { Icon(Icons.Filled.ArrowDropDown, "Conversations") }
                         }
                         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Saved chats…", color = MaterialTheme.colorScheme.primary) },
+                                onClick = {
+                                    menuOpen = false
+                                    showHistory = true
+                                    history = null
+                                    scope.launch {
+                                        history = runCatching {
+                                            json.decodeFromString<com.idroid.app.data.CopilotHistory>(call("GET", "/history").lines().last { it.startsWith("{") }).chats
+                                        }.getOrElse { error = it.message; emptyList() }
+                                    }
+                                },
+                            )
                             state?.sessions.orEmpty().forEach { s ->
                                 DropdownMenuItem(
                                     text = {

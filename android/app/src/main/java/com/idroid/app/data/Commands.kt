@@ -72,3 +72,10 @@ data class CopilotPermission(val toolCallId: String, val title: String, val deta
 
 @Serializable
 data class CopilotOption(val id: String, val name: String, val kind: String = "")
+
+@Serializable
+data class CopilotHistory(val chats: List<CopilotSavedChat> = emptyList())
+
+/** A saved Copilot agent chat (its history note); [lastUsed] is epoch ms. */
+@Serializable
+data class CopilotSavedChat(val path: String, val title: String, val lastUsed: Long = 0, val backend: String = "")
