@@ -114,9 +114,13 @@ cat > .build/IdroidShare.entitlements <<'EOF'
 </dict>
 </plist>
 EOF
-codesign --force --sign - --entitlements .build/IdroidShare.entitlements "$APPEX"
+# Stable local identity (if present) keeps macOS permissions such as
+# Accessibility (ADR-0008) across rebuilds; ad hoc ("-") resets them each time.
+SIGN_ID=$(security find-identity -p codesigning 2>/dev/null | awk '/"Idroid Local Signing"/ {print $2; exit}')
+SIGN_ID=${SIGN_ID:--}
+codesign --force --sign "$SIGN_ID" --entitlements .build/IdroidShare.entitlements "$APPEX"
 
-codesign --force --sign - "$APP"
+codesign --force --sign "$SIGN_ID" "$APP"
 echo "Built $APP"
 
 if [ "${1:-}" = "--install" ]; then
