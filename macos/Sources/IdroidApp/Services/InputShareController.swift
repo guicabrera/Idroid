@@ -215,10 +215,21 @@ final class InputShareController {
         edgePush = 0
         remote = true
         frozenAt = CGPoint(x: edge == .right ? screen.maxX - 1 : screen.minX, y: p.y)
-        CGAssociateMouseAndMouseCursorPosition(0)
+        // Without this, events right after a warp are suppressed for ~0.25 s.
+        CGEventSource(stateID: .combinedSessionState)?.localEventsSuppressionInterval = 0
+        pinCursor()
         CGDisplayHideCursor(CGMainDisplayID())
         send(["t": "enter", "side": edge == .right ? "left" : "right", "y": Double((p.y - screen.minY) / screen.height)])
         status = .controlling
+    }
+
+    /// Disassociating the cursor doesn't always hold (other apps, display
+    /// changes reset it), so also put the cursor back at the edge on every
+    /// move while the phone has control. Warping doesn't create events, and
+    /// the deltas were already read from this one.
+    private func pinCursor() {
+        CGAssociateMouseAndMouseCursorPosition(0)
+        CGWarpMouseCursorPosition(frozenAt)
     }
 
     private func returnToMac(atFraction y: CGFloat?) {
@@ -291,6 +302,7 @@ final class InputShareController {
         switch type {
         case .mouseMoved, .leftMouseDragged, .rightMouseDragged:
             queueMove(Double(dx), Double(dy))
+            pinCursor()
         case .leftMouseDown: flushMove(); send(["t": "down"])
         case .leftMouseUp: flushMove(); send(["t": "up"])
         case .rightMouseDown: send(["t": "rclick"])
