@@ -19,8 +19,9 @@ struct MenuBarMenu: View {
             Divider()
 
             Menu("Control") {
-                if appState.devices.isEmpty { Text("No devices yet") }
-                ForEach(appState.devices) { device in
+                let macs = appState.devices.filter(appState.isControllable)
+                if macs.isEmpty { Text("No Mac to control") }
+                ForEach(macs) { device in
                     Menu("\(device.online ? "●" : "○") \(device.name)") {
                         Button("Terminal") { openWindow(id: RemoteWindow.id, value: RemoteTarget(deviceID: device.id, kind: .terminal)); NSApp.activate() }
                         Button("Copilot") { openWindow(id: RemoteWindow.id, value: RemoteTarget(deviceID: device.id, kind: .copilot)); NSApp.activate() }

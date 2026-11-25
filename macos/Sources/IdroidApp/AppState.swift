@@ -160,6 +160,7 @@ final class AppState: ObservableObject {
             let response = try await apiClient.listDevices(pairing)
             me = response.me
             devices = response.devices
+            probeControllable()
         } catch RelayError.http(401) {
             // This Mac was removed from another device: back to pairing.
             forgetPairing()
@@ -167,6 +168,28 @@ final class AppState: ObservableObject {
             errorMessage = error.localizedDescription
         }
     }
+
+    /// Devices that answer remote commands (Macs running Idroid); only those
+    /// get Terminal/Copilot/VS Code/SSH. The relay doesn't know device types,
+    /// so each online device is asked once; a phone doesn't answer.
+    @Published private(set) var controllableIDs: Set<String> = []
+    private var probedIDs: Set<String> = []
+
+    private func probeControllable() {
+        guard let pairing else { return }
+        for device in devices where device.online && !probedIDs.contains(device.id) {
+            probedIDs.insert(device.id)
+            Task {
+                if (try? await apiClient.commandCatalog(pairing, deviceID: device.id)) != nil {
+                    controllableIDs.insert(device.id)
+                } else {
+                    probedIDs.remove(device.id) // ask again next refresh
+                }
+            }
+        }
+    }
+
+    func isControllable(_ device: PeerDevice) -> Bool { controllableIDs.contains(device.id) }
 
     func deviceName(for id: String) -> String {
         devices.first { $0.id == id }?.name ?? "Unknown device"

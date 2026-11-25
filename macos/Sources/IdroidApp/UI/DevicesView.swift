@@ -77,6 +77,7 @@ private struct DeviceCard: View {
                         Button("Send Clipboard") { appState.sendClipboard(to: .device(device.id)) }
                         Button("Browse Files") { appState.browse(device) }
                             .disabled(!device.online)
+                        if appState.isControllable(device) {
                         Divider()
                         Section("Control this device") {
                             Button("Terminal") { openWindow(id: RemoteWindow.id, value: RemoteTarget(deviceID: device.id, kind: .terminal)) }
@@ -89,6 +90,7 @@ private struct DeviceCard: View {
                             Button("SSH in Terminal") { appState.openRemoteSSH(device) }
                         }
                         .disabled(!device.online)
+                        }
                         Divider()
                         Button("Remove Device…", role: .destructive) { confirmRemove = true }
                     } label: {
@@ -108,7 +110,7 @@ private struct DeviceCard: View {
                 }
             }
 
-            if !isSelf {
+            if !isSelf && appState.isControllable(device) {
                 HStack(spacing: 6) {
                     remoteButton("Terminal", "terminal") { openWindow(id: RemoteWindow.id, value: RemoteTarget(deviceID: device.id, kind: .terminal)) }
                     remoteButton("Copilot", "sparkles") { openWindow(id: RemoteWindow.id, value: RemoteTarget(deviceID: device.id, kind: .copilot)) }
