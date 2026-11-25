@@ -22,6 +22,7 @@ status: active
 | [ADR-0004: Live file access](./ADR-0004-live-file-access.md) | *Proposed.* Direct tailnet file service; Mac folders in Android's system picker first, Android folders on the Mac later. |
 | [ADR-0005: Remote terminal and AI agent](./ADR-0005-remote-terminal-and-ai-agent.md) | *Accepted.* Named commands, opt-in free terminal with autocomplete and an approval-gated AI agent, over the ADR-0004 tunnel. |
 | [ADR-0006: Copilot bridge](./ADR-0006-copilot-bridge.md) | *Accepted.* Obsidian plugin exposes Copilot's live agent chat to the phone over the command tunnel. |
+| [ADR-0007: VS Code on the phone](./ADR-0007-vscode-on-phone.md) | *Accepted.* VS Code Pane's proxy published on the tailnet with tailscale serve, opened in a phone tab. |
 
 Use the [ADR template](../10-resources/templates/adr-template.md) for decisions. Keep ADRs in this folder while there are fewer than three; create an `adrs/` subfolder when the collection grows.
 

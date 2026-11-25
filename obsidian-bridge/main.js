@@ -15,6 +15,9 @@ const DIR = path.join(os.homedir(), ".idroid");
 const INFO = path.join(DIR, "copilot-bridge.json");
 const HELPER = path.join(DIR, "copilot");
 const MAX_MESSAGES = 80;
+/** tailnet HTTPS port the phone opens VS Code on (tailscale serve → the vscode-pane proxy). */
+const VSCODE_TAILNET_PORT = 8445;
+const TAILSCALE_CLI = ["/usr/local/bin/tailscale", "/opt/homebrew/bin/tailscale", "/Applications/Tailscale.app/Contents/MacOS/Tailscale"];
 const MAX_TOOL_TEXT = 400;
 
 const HELPER_SCRIPT = `#!/bin/zsh
@@ -147,11 +150,37 @@ module.exports = class IdroidBridge extends Plugin {
       this.watch();
       return this.json(res, 200, { session: m.activeSessionId });
     }
+    if (req.method === "POST" && url.pathname === "/vscode") {
+      return this.json(res, 200, await this.vscode());
+    }
     if (req.method === "POST" && url.pathname === "/open") {
       m.setActiveSession(body.session);
       return this.json(res, 200, {});
     }
     return this.json(res, 404, { error: "unknown endpoint" });
+  }
+
+  /**
+   * VS Code on the phone (ADR-0007): starts the vscode-pane server if needed
+   * (its proxy only answers under a secret prefix and injects the connection
+   * token) and publishes that proxy on the tailnet over HTTPS with
+   * `tailscale serve`, which is idempotent. HTTPS matters: the proxy marks
+   * cookies Secure and VS Code web needs a secure context.
+   */
+  async vscode() {
+    const pane = this.app.plugins.plugins["vscode-pane"];
+    if (!pane || !pane.server) throw new Error("The VS Code Pane plugin isn't enabled in Obsidian");
+    const base = new URL(await pane.server.ensure());
+    const cli = TAILSCALE_CLI.find((p) => fs.existsSync(p));
+    if (!cli) throw new Error("Tailscale CLI not found on this Mac");
+    const run = (args) => new Promise((resolve, reject) => {
+      require("child_process").execFile(cli, args, { timeout: 20000 }, (err, stdout, stderr) =>
+        err ? reject(new Error((stderr || err.message).trim())) : resolve(stdout));
+    });
+    await run(["serve", "--bg", `--https=${VSCODE_TAILNET_PORT}`, `http://127.0.0.1:${base.port}`]);
+    const status = JSON.parse(await run(["status", "--json"]));
+    const host = String(status.Self.DNSName || "").replace(/\.$/, "");
+    return { url: `https://${host}:${VSCODE_TAILNET_PORT}${base.pathname}/` };
   }
 
   /** Saved agent chats (Copilot's history notes), most recently used first. */

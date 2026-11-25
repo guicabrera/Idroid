@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.DropdownMenu
@@ -50,6 +51,7 @@ private sealed interface TermTab {
     val title: String
     class Shell(override val id: Int, override val title: String) : TermTab
     class Ssh(override val id: Int, override val title: String, val catalog: CommandCatalog) : TermTab
+    class VsCode(override val id: Int, override val title: String) : TermTab
 }
 
 /**
@@ -82,6 +84,11 @@ fun TerminalTabs(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit)
         nextId++
     }
 
+    fun addVsCode() {
+        tabs += TermTab.VsCode(nextId, "VS Code").also { selected = it.id }
+        nextId++
+    }
+
     fun close(tab: TermTab) {
         val index = tabs.indexOf(tab)
         tabs.remove(tab)
@@ -104,7 +111,10 @@ fun TerminalTabs(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit)
                             onClick = { selected = tab.id },
                             text = {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(if (tab is TermTab.Ssh) Icons.Filled.Computer else Icons.Filled.Terminal, null, Modifier.size(16.dp))
+                                    Icon(
+                                        when (tab) { is TermTab.Ssh -> Icons.Filled.Computer; is TermTab.VsCode -> Icons.Filled.Code; else -> Icons.Filled.Terminal },
+                                        null, Modifier.size(16.dp),
+                                    )
                                     Text(" ${tab.title}", fontSize = 13.sp)
                                     IconButton(onClick = { close(tab) }, modifier = Modifier.size(28.dp)) {
                                         Icon(Icons.Filled.Close, "Close ${tab.title}", Modifier.size(14.dp))
@@ -121,6 +131,11 @@ fun TerminalTabs(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit)
                             text = { Text("New terminal") },
                             leadingIcon = { Icon(Icons.Filled.Terminal, null) },
                             onClick = { addMenu = false; addShell() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("VS Code") },
+                            leadingIcon = { Icon(Icons.Filled.Code, null) },
+                            onClick = { addMenu = false; addVsCode() },
                         )
                         DropdownMenuItem(
                             text = { Text("New SSH session") },
@@ -151,6 +166,7 @@ fun TerminalTabs(device: PeerDevice, pairing: PairingConfig, onBack: () -> Unit)
                                 onOpenSsh = ::addSsh,
                             )
                             is TermTab.Ssh -> SshScreen(device, pairing, tab.catalog, onBack = { close(tab) }, active = active)
+                            is TermTab.VsCode -> VsCodeScreen(device, pairing, onBack = { close(tab) }, active = active)
                         }
                     }
                 }
