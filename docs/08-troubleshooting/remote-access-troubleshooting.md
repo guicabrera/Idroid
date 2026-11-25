@@ -34,6 +34,8 @@ severity: medium
 | SSH: host key error | The Mac's SSH host key changed (e.g. macOS reinstalled) | Expected change only: clear the app's data (resets `known_hosts`; this also unpairs, so pair again). Otherwise don't connect. |
 | SSH/VS Code: timeout | Phone not on the tailnet | Turn Tailscale on. |
 | Copilot/VS Code: "Open Obsidian…" | Bridge info file missing | Open Obsidian; check Idroid Bridge is enabled. |
+| Copilot/VS Code: `curl: (7) Failed to connect to 127.0.0.1` | Obsidian's renderer crashed (main process alive, no window), info file stale | `~/.idroid/obsidian-watchdog restart`; crash reports in `~/Library/Logs/DiagnosticReports/Obsidian Helper (Renderer)-*.ips`. With plugin ≥ 0.8.0 the helper and the watchdog do it themselves. |
+| "Obsidian didn't come back on this Mac" | Restart failed (vault volume not mounted, plugin disabled) | `~/.idroid/obsidian-watchdog status` and its log `~/Library/Logs/Idroid/obsidian-watchdog.log`. |
 | Copilot: errors after a Copilot update | Copilot internals changed | `~/.idroid/copilot GET /state` on the Mac; update `obsidian-bridge/main.js`. |
 | VS Code: "VS Code Pane plugin isn't enabled" | Plugin off | Enable VS Code Pane in Obsidian. |
 | App returned home and tabs were lost | Android killed the app in the background (rotation no longer does) | Reopen; tabs aren't persisted. |

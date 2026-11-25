@@ -32,4 +32,5 @@ The phone's Claude Code mode (ADR-0005) works in the vault but lacks what Copilo
 - **Positive:** the real Copilot chat from the phone — tools, instructions, history and diffs land on the Mac exactly as if typed there.
 - **Risk:** private API. A Copilot update can rename these members; the bridge then fails with an error on the phone, nothing else breaks. Re-check after Copilot updates.
 - **Risk:** same trust as the ADR-0005 terminal: anyone with the phone token can drive Copilot.
+- **Availability:** Obsidian's renderer grows with use and can crash after hours (2026-11-25: SIGTRAP after 7.5 h, main process left without a window, bridge port dead). `obsidian-bridge/watchdog.sh` (launchd, every 2 min) restarts Obsidian when the bridge doesn't answer or memory passes a limit while idle; the helper restarts it on demand.
 - **Limitations:** needs Obsidian open on the Mac; replies refresh per change, not token by token. Saved chats (`GET /history`, `POST /resume` via `getChatHistoryItems` and `loadChatById`) reopen on the Mac too, as the Navigator does.

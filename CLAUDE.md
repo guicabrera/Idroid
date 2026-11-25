@@ -53,8 +53,9 @@ podman compose up -d --build --force-recreate   # sem --force-recreate o contain
 ### Idroid Bridge (plugin do Obsidian)
 
 ```bash
-cp obsidian-bridge/{manifest.json,main.js} ../../.obsidian/plugins/idroid-bridge/   # depois desativar/ativar no Obsidian
+cp obsidian-bridge/{manifest.json,main.js,watchdog.sh} ../../.obsidian/plugins/idroid-bridge/   # depois desativar/ativar no Obsidian
 ~/.idroid/copilot GET /state                                                       # teste
+~/.idroid/obsidian-watchdog status                                                 # watchdog (instalado no Mac mini)
 ```
 
 Usa API interna do Copilot (testado no 4.0.18): retestar após atualizar o Copilot.

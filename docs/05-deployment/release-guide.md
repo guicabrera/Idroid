@@ -53,10 +53,19 @@ curl http://<tailnet name>:8443/healthz
 ## Idroid Bridge (Obsidian plugin)
 
 ```bash
-cp obsidian-bridge/{manifest.json,main.js} <vault>/.obsidian/plugins/idroid-bridge/
+cp obsidian-bridge/{manifest.json,main.js,watchdog.sh} <vault>/.obsidian/plugins/idroid-bridge/
 ```
 
-Enable it in Obsidian (Community plugins). After editing, bump `manifest.json`'s version and disable/enable the plugin. Check: `~/.idroid/copilot GET /state`.
+Enable it in Obsidian (Community plugins). After editing, bump `manifest.json`'s version and disable/enable the plugin (or `~/.idroid/obsidian-watchdog restart`). Check: `~/.idroid/copilot GET /state`.
+
+On the Mac that serves the phone (the Mac mini), install the watchdog once; the plugin keeps `~/.idroid/obsidian-watchdog` up to date on every load:
+
+```bash
+~/.idroid/obsidian-watchdog install   # launchd agent, check every 2 min
+~/.idroid/obsidian-watchdog status    # bridge, renderer memory, idle time, last restarts
+```
+
+It restarts Obsidian when the bridge stops answering (renderer crashed or hung) and, before a crash, when the renderer's footprint passes 5 GB with Copilot and the Mac idle for 20 min (8 GB: always). Limits in `~/.idroid/watchdog.conf` (`SOFT_MB`, `HARD_MB`, `IDLE_MIN`, `KEEP_OPEN`, `COOLDOWN`); log in `~/Library/Logs/Idroid/obsidian-watchdog.log`.
 
 ## Related documentation
 
