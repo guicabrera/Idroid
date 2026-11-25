@@ -75,6 +75,7 @@ class InputControlService : AccessibilityService() {
         instance = null
         socket?.close(1000, null)
         holdWifi(false)
+        stopUdp()
         hidePointer()
         super.onDestroy()
     }
@@ -107,12 +108,13 @@ class InputControlService : AccessibilityService() {
 
     private fun connect(config: PairingConfig, peer: String) {
         socket?.close(1000, null)
+        stopUdp()
         holdWifi(true)
         peerId = peer
         val app = application as IdroidApplication
         socket = app.relayApiClient.openInputSocket(config, peer, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                webSocket.send("""{"t":"hello"}""")
+                webSocket.send(helloMessage())
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -126,11 +128,71 @@ class InputControlService : AccessibilityService() {
         })
     }
 
+    // --- Direct UDP path for pointer moves ---------------------------------------
+    //
+    // Moves are many, tiny and only the latest matters: going Mac → relay
+    // (TCP) → phone queues them behind each other. The phone opens a UDP port,
+    // advertises its LAN/Tailscale addresses and a random key in "hello", and
+    // the Mac sends "key|seq|dx|dy" datagrams straight here. Stale (out of
+    // order) packets are dropped. Everything else still uses the relay pipe.
+
+    private var udp: java.net.DatagramSocket? = null
+    private var udpKey = ""
+    private var lastSeq = -1L
+
+    private fun helloMessage(): String {
+        startUdp()
+        val port = udp?.localPort ?: 0
+        val addrs = runCatching {
+            java.net.NetworkInterface.getNetworkInterfaces().toList()
+                .filter { it.isUp && !it.isLoopback }
+                .flatMap { it.inetAddresses.toList() }
+                .filterIsInstance<java.net.Inet4Address>()
+                .map { it.hostAddress.orEmpty() }
+                .filter { it.startsWith("192.168.") || it.startsWith("10.") || it.startsWith("172.") || it.startsWith("100.") }
+        }.getOrDefault(emptyList())
+        return buildJsonObject {
+            put("t", "hello")
+            put("udp", port)
+            put("key", udpKey)
+            put("addrs", kotlinx.serialization.json.JsonArray(addrs.map { kotlinx.serialization.json.JsonPrimitive(it) }))
+        }.toString()
+    }
+
+    private fun startUdp() {
+        if (udp != null) return
+        val sock = runCatching { java.net.DatagramSocket(0) }.getOrNull() ?: return
+        udp = sock
+        udpKey = java.util.UUID.randomUUID().toString().take(12)
+        lastSeq = -1L
+        Thread({
+            val buf = ByteArray(256)
+            val packet = java.net.DatagramPacket(buf, buf.size)
+            while (!sock.isClosed) {
+                runCatching { sock.receive(packet) }.onFailure { return@Thread }
+                val parts = String(packet.data, 0, packet.length).split('|')
+                if (parts.size != 4 || parts[0] != udpKey) continue
+                val seq = parts[1].toLongOrNull() ?: continue
+                val dx = parts[2].toFloatOrNull() ?: continue
+                val dy = parts[3].toFloatOrNull() ?: continue
+                main.post {
+                    if (seq > lastSeq) { lastSeq = seq; move(dx, dy) }
+                }
+            }
+        }, "idroid-input-udp").apply { isDaemon = true; start() }
+    }
+
+    private fun stopUdp() {
+        udp?.close()
+        udp = null
+    }
+
     private fun closed(webSocket: WebSocket) {
         main.post {
             if (webSocket === socket) {
                 socket = null
                 holdWifi(false)
+                stopUdp()
                 leave()
             }
         }

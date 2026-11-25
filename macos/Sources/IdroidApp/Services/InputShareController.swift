@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import Foundation
+import Network
 
 /// Shared mouse and keyboard (ADR-0008). Pushing the pointer past the chosen
 /// edge of the Mac's screens hands mouse and keyboard to the phone: the cursor
@@ -80,6 +81,7 @@ final class InputShareController {
         pingTimer?.invalidate()
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
+        closeUDP()
         peerReady = false
         removeTap()
         deviceID = nil
@@ -121,6 +123,7 @@ final class InputShareController {
 
     private func dropped() {
         returnToMac(atFraction: nil)
+        closeUDP()
         socket = nil
         peerReady = false
         guard deviceID != nil else { return }
@@ -137,11 +140,50 @@ final class InputShareController {
         switch type {
         case "hello":
             peerReady = true
+            setupUDP(msg)
             if !remote { status = .ready }
         case "exit":
             returnToMac(atFraction: (msg["y"] as? Double).map { CGFloat($0) })
         default: break
         }
+    }
+
+    // MARK: - Direct UDP for moves
+
+    /// One connection per address the phone advertised (LAN and Tailscale);
+    /// each datagram goes to all, the phone drops duplicates by sequence.
+    private var udpConnections: [NWConnection] = []
+    private var udpKey = ""
+    private var udpSeq: Int64 = 0
+
+    private func setupUDP(_ msg: [String: Any]) {
+        closeUDP()
+        guard let port = msg["udp"] as? Int, port > 0, let key = msg["key"] as? String,
+              let addrs = msg["addrs"] as? [String], let nwPort = NWEndpoint.Port(rawValue: UInt16(port)) else { return }
+        udpKey = key
+        udpSeq = 0
+        for addr in addrs {
+            let params = NWParameters.udp
+            params.serviceClass = .interactiveVideo
+            let conn = NWConnection(host: NWEndpoint.Host(addr), port: nwPort, using: params)
+            conn.start(queue: .main)
+            udpConnections.append(conn)
+        }
+    }
+
+    private func closeUDP() {
+        udpConnections.forEach { $0.cancel() }
+        udpConnections = []
+    }
+
+    private func sendMove(_ dx: Double, _ dy: Double) {
+        guard !udpConnections.isEmpty else {
+            send(["t": "move", "dx": dx, "dy": dy])
+            return
+        }
+        udpSeq += 1
+        let data = Data(String(format: "%@|%lld|%.2f|%.2f", udpKey, udpSeq, dx, dy).utf8)
+        for conn in udpConnections { conn.send(content: data, completion: .idempotent) }
     }
 
     private func send(_ msg: [String: Any]) {
@@ -280,7 +322,7 @@ final class InputShareController {
             guard let self else { return }
             self.flushScheduled = false
             guard self.remote, self.pendingDX != 0 || self.pendingDY != 0 else { return }
-            self.send(["t": "move", "dx": self.pendingDX, "dy": self.pendingDY])
+            self.sendMove(self.pendingDX, self.pendingDY)
             self.pendingDX = 0
             self.pendingDY = 0
         }
@@ -288,7 +330,7 @@ final class InputShareController {
 
     private func flushMove() {
         guard pendingDX != 0 || pendingDY != 0 else { return }
-        send(["t": "move", "dx": pendingDX, "dy": pendingDY])
+        sendMove(pendingDX, pendingDY)
         pendingDX = 0
         pendingDY = 0
     }

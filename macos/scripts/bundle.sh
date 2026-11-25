@@ -39,6 +39,7 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
 <plist version="1.0">
 <dict>
 	<key>CFBundleIdentifier</key><string>com.idroid.mac</string>
+	<key>NSLocalNetworkUsageDescription</key><string>Idroid envia o movimento do mouse direto para o seu celular na rede local.</string>
 	<key>CFBundleName</key><string>Idroid</string>
 	<key>CFBundleExecutable</key><string>Idroid</string>
 	<key>CFBundleIconFile</key><string>Idroid</string>
