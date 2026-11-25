@@ -17,6 +17,18 @@ const HELPER = path.join(DIR, "copilot");
 const MAX_MESSAGES = 80;
 /** tailnet HTTPS port the phone opens VS Code on (tailscale serve → the vscode-pane proxy). */
 const VSCODE_TAILNET_PORT = 8445;
+/**
+ * Settings for the phone's VS Code window only (VS Code web keeps user settings
+ * in each browser, so the Obsidian pane on the Mac is untouched). Claude Code's
+ * lockEditorGroups sends every file opened next to a Claude tab into another
+ * group, which splits a phone screen; the secondary side bar (Chat) halves it.
+ * Applied through VS Code Pane's bridge extension, only where unset.
+ */
+const PHONE_VSCODE_SETTINGS = {
+  "claudeCode.lockEditorGroups": false,
+  "workbench.secondarySideBar.defaultVisibility": "hidden",
+};
+const PHONE_VSCODE_COMMANDS = ["workbench.action.joinAllGroups", "workbench.action.closeAuxiliaryBar"];
 const TAILSCALE_CLI = ["/usr/local/bin/tailscale", "/opt/homebrew/bin/tailscale", "/Applications/Tailscale.app/Contents/MacOS/Tailscale"];
 const MAX_TOOL_TEXT = 400;
 
@@ -170,7 +182,9 @@ module.exports = class IdroidBridge extends Plugin {
   async vscode(folder) {
     const pane = this.app.plugins.plugins["vscode-pane"];
     if (!pane || !pane.server) throw new Error("The VS Code Pane plugin isn't enabled in Obsidian");
+    const known = new Set(pane.server.clients.keys());
     const base = new URL(await pane.server.ensure());
+    this.tunePhoneWindow(pane.server, known);
     const cli = TAILSCALE_CLI.find((p) => fs.existsSync(p));
     if (!cli) throw new Error("Tailscale CLI not found on this Mac");
     const run = (args) => new Promise((resolve, reject) => {
@@ -186,6 +200,27 @@ module.exports = class IdroidBridge extends Plugin {
     const url = new URL(`https://${host}:${VSCODE_TAILNET_PORT}${base.pathname}/`);
     url.searchParams.set("folder", target);
     return { url: url.toString(), folder: target, vault, home: os.homedir() };
+  }
+
+  /**
+   * The phone's VS Code window is the first new bridge client after the phone
+   * asked for VS Code: give it the phone settings and fold any split groups.
+   */
+  tunePhoneWindow(server, known) {
+    const deadline = Date.now() + 10 * 60000; // room for the first "trust this folder" prompt
+    const timer = window.setInterval(() => {
+      for (const [id, client] of server.clients) {
+        if (known.has(id)) continue;
+        known.add(id);
+        client.queue.push({ type: "perf", settings: PHONE_VSCODE_SETTINGS });
+        for (const cmd of PHONE_VSCODE_COMMANDS) client.queue.push({ type: "command", id: cmd });
+        server.flush(client);
+        window.clearInterval(timer);
+        return;
+      }
+      if (Date.now() > deadline) window.clearInterval(timer);
+    }, 1000);
+    this.register(() => window.clearInterval(timer));
   }
 
   /** Saved agent chats (Copilot's history notes), most recently used first. */
