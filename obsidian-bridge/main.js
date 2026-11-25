@@ -62,6 +62,8 @@ module.exports = class IdroidBridge extends Plugin {
     // the phone shows is simpler and catches everything (messages, status,
     // permission prompts, new sessions).
     this.registerInterval(window.setInterval(() => this.watch(), 400));
+    this.tuned = new Set();
+    this.registerInterval(window.setInterval(() => this.tunePhoneWindows(), 1500));
   }
 
   onunload() {
@@ -182,9 +184,7 @@ module.exports = class IdroidBridge extends Plugin {
   async vscode(folder) {
     const pane = this.app.plugins.plugins["vscode-pane"];
     if (!pane || !pane.server) throw new Error("The VS Code Pane plugin isn't enabled in Obsidian");
-    const known = new Set(pane.server.clients.keys());
     const base = new URL(await pane.server.ensure());
-    this.tunePhoneWindow(pane.server, known);
     const cli = TAILSCALE_CLI.find((p) => fs.existsSync(p));
     if (!cli) throw new Error("Tailscale CLI not found on this Mac");
     const run = (args) => new Promise((resolve, reject) => {
@@ -203,24 +203,22 @@ module.exports = class IdroidBridge extends Plugin {
   }
 
   /**
-   * The phone's VS Code window is the first new bridge client after the phone
-   * asked for VS Code: give it the phone settings and fold any split groups.
+   * Phone VS Code windows: VS Code Pane's bridge reports each window's host
+   * (vscode.env.remoteAuthority); Obsidian's own panes use 127.0.0.1, so any
+   * other host is a remote client — the phone over the tailnet. Each gets the
+   * phone settings once, whenever it connects.
    */
-  tunePhoneWindow(server, known) {
-    const deadline = Date.now() + 10 * 60000; // room for the first "trust this folder" prompt
-    const timer = window.setInterval(() => {
-      for (const [id, client] of server.clients) {
-        if (known.has(id)) continue;
-        known.add(id);
-        client.queue.push({ type: "perf", settings: PHONE_VSCODE_SETTINGS });
-        for (const cmd of PHONE_VSCODE_COMMANDS) client.queue.push({ type: "command", id: cmd });
-        server.flush(client);
-        window.clearInterval(timer);
-        return;
-      }
-      if (Date.now() > deadline) window.clearInterval(timer);
-    }, 1000);
-    this.register(() => window.clearInterval(timer));
+  tunePhoneWindows() {
+    const pane = this.app.plugins.plugins["vscode-pane"];
+    const server = pane && pane.server;
+    if (!server || !server.clients) return;
+    for (const [id, client] of server.clients) {
+      if (this.tuned.has(id) || !client.authority || /^(127\.0\.0\.1|localhost)(:|$)/.test(client.authority)) continue;
+      this.tuned.add(id);
+      client.queue.push({ type: "perf", settings: PHONE_VSCODE_SETTINGS });
+      for (const cmd of PHONE_VSCODE_COMMANDS) client.queue.push({ type: "command", id: cmd });
+      server.flush(client);
+    }
   }
 
   /** Saved agent chats (Copilot's history notes), most recently used first. */

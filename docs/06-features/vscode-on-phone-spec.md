@@ -20,7 +20,7 @@ status: active
 
 - Opens the **Obsidian vault** folder by default. The folder button above the page switches to the vault, home (`~`) or any path on the Mac; VS Code's File → Open Folder also works.
 - The Idroid Bridge starts VS Code Pane's server if no pane is open and publishes its proxy with `tailscale serve --https=8445` (tailnet only).
-- **One editor group on the phone:** when the phone's window connects, the bridge gives it (and only it — VS Code web keeps settings per browser) `claudeCode.lockEditorGroups: false` and a hidden secondary side bar, and joins split groups. Files then open as tabs next to Claude Code instead of splitting the screen. The window is recognized as the first new VS Code Pane bridge client within 10 minutes of the phone's request (the first time includes VS Code's "trust this folder" prompt; in Restricted Mode extensions, the bridge included, don't run).
+- **One editor group on the phone:** when the phone's window connects, the bridge gives it (and only it — VS Code web keeps settings per browser) `claudeCode.lockEditorGroups: false` and a hidden secondary side bar, and joins split groups. Files then open as tabs next to Claude Code instead of splitting the screen. Phone windows are recognized by their host: VS Code Pane's bridge extension (0.7.1+) reports `vscode.env.remoteAuthority`, which is `127.0.0.1:<port>` for Obsidian's panes and the tailnet name for the phone. In Restricted Mode extensions (the bridge included) don't run: tap **Trust** once.
 - Back goes through VS Code's history, then closes the tab. Landscape or a tablet is much more comfortable.
 
 ## Requirements and limits
