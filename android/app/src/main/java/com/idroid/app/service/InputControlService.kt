@@ -36,7 +36,10 @@ import kotlin.math.hypot
  * edge and lands here: this service draws a pointer overlay, turns clicks,
  * drags and scrolls into touch gestures, and types into the focused field.
  * Pushing the pointer back through the edge it came in from hands control back
- * to the Mac.
+ * to the Mac. While it controls the phone, the Mac polls "sync" and this
+ * service answers "state": whether it really holds the pointer and the last
+ * UDP move it got, so a lost "enter"/"exit" or a blocked UDP path can't strand
+ * the Mac's cursor at its edge.
  *
  * Separate from ClipboardAccessibilityService on purpose: this one needs window
  * content (to type into fields) and gestures, so the user opts in to it on its own.
@@ -55,6 +58,8 @@ class InputControlService : AccessibilityService() {
     private var active = false
     /** Edge of the phone the pointer came in through, and goes back out of. */
     private var returnSide = "left"
+    /** The Mac's number for the current crossing, echoed in "state". */
+    private var enterSeq = 0
 
     private var downAt = 0L
     private var downX = 0f
@@ -154,6 +159,7 @@ class InputControlService : AccessibilityService() {
         }.getOrDefault(emptyList())
         return buildJsonObject {
             put("t", "hello")
+            put("v", 2) // answers "sync" with "state"
             put("udp", port)
             put("key", udpKey)
             put("addrs", kotlinx.serialization.json.JsonArray(addrs.map { kotlinx.serialization.json.JsonPrimitive(it) }))
@@ -211,7 +217,8 @@ class InputControlService : AccessibilityService() {
 
     private fun handle(msg: JsonObject) {
         when (msg.str("t")) {
-            "enter" -> enter(msg.str("side") ?: "left", msg.num("y"))
+            "enter" -> { enterSeq = msg.num("n").toInt(); enter(msg.str("side") ?: "left", msg.num("y")); sendState() }
+            "sync" -> sendState()
             // Mirror window on the Mac (ADR-0009): absolute position, no overlay pointer.
             "pos" -> {
                 val (w, h) = screenSize()
@@ -232,6 +239,8 @@ class InputControlService : AccessibilityService() {
             "key" -> msg.str("k")?.let { key(it) }
         }
     }
+
+    private fun sendState() = send { put("t", "state"); put("n", enterSeq); put("active", active); put("udp", lastSeq) }
 
     private fun screenSize(): Pair<Float, Float> {
         if (android.os.Build.VERSION.SDK_INT >= 30) {

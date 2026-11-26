@@ -9,6 +9,12 @@ import Network
 /// relay pipe to the phone's InputControlService. The phone sends "exit" when
 /// its pointer goes back out of the same edge; ⌘⎋ also returns at any time.
 ///
+/// While the phone has control the Mac polls it every second ("sync" →
+/// "state"): if the phone says it doesn't hold the pointer, or stops
+/// answering, control comes back here instead of leaving the cursor frozen at
+/// the edge; if the phone isn't getting the UDP moves, they go over the pipe.
+/// Phones from before this ("hello" without "v": 2) aren't polled.
+///
 /// Needs Accessibility permission (event tap). Runs on the main thread.
 final class InputShareController {
 
@@ -40,6 +46,16 @@ final class InputShareController {
     private var tapSource: CFRunLoopSource?
     private var reconnectWork: DispatchWorkItem?
     private var pingTimer: Timer?
+    private var syncTimer: Timer?
+    /// Protocol version the phone announced in "hello".
+    private var peerVersion = 0
+    private var lastPeerState = Date.distantPast
+    /// Numbers each "enter"; the phone echoes it in "state", so an answer
+    /// about an earlier crossing is ignored.
+    private var enterSeq = 0
+    /// UDP sequence already sent when the previous "sync" went out.
+    private var udpCheckpoint: Int64 = 0
+    private var udpMisses = 0
     /// Where the cursor sat when control left; it stays frozen there.
     private var frozenAt = CGPoint.zero
     private var edgePush: CGFloat = 0
@@ -83,6 +99,7 @@ final class InputShareController {
         socket = nil
         closeUDP()
         peerReady = false
+        peerVersion = 0
         removeTap()
         deviceID = nil
         status = .off
@@ -94,6 +111,7 @@ final class InputShareController {
         reconnectWork?.cancel()
         socket?.cancel(with: .goingAway, reason: nil)
         peerReady = false
+        peerVersion = 0
         guard let config, let apiClient, let deviceID else { return }
         status = .connecting
         let task = apiClient.openInputSocket(config, deviceID: deviceID)
@@ -127,6 +145,7 @@ final class InputShareController {
         if mirror.isOpen { mirror.close(notify: false); onMirrorChange?(false) }
         socket = nil
         peerReady = false
+        peerVersion = 0
         guard deviceID != nil else { return }
         status = .connecting
         let work = DispatchWorkItem { [weak self] in self?.connect() }
@@ -141,6 +160,7 @@ final class InputShareController {
         switch type {
         case "hello":
             peerReady = true
+            peerVersion = msg["v"] as? Int ?? 1
             setupUDP(msg)
             if !remote { status = .ready }
         case "mirror_ready":
@@ -156,6 +176,8 @@ final class InputShareController {
             if wasOpen { onMirrorStopped?() }
         case "exit":
             returnToMac(atFraction: (msg["y"] as? Double).map { CGFloat($0) })
+        case "state":
+            peerState(msg)
         default: break
         }
     }
@@ -207,6 +229,7 @@ final class InputShareController {
               let addrs = msg["addrs"] as? [String], let nwPort = NWEndpoint.Port(rawValue: UInt16(port)) else { return }
         udpKey = key
         udpSeq = 0
+        udpMisses = 0
         for addr in addrs {
             let params = NWParameters.udp
             params.serviceClass = .interactiveVideo
@@ -264,8 +287,50 @@ final class InputShareController {
         CGEventSource(stateID: .combinedSessionState)?.localEventsSuppressionInterval = 0
         pinCursor()
         CGDisplayHideCursor(CGMainDisplayID())
-        send(["t": "enter", "side": edge == .right ? "left" : "right", "y": Double((p.y - screen.minY) / screen.height)])
+        enterSeq += 1
+        send(["t": "enter", "n": enterSeq, "side": edge == .right ? "left" : "right", "y": Double((p.y - screen.minY) / screen.height)])
         status = .controlling
+        startSync()
+    }
+
+    // MARK: - Sync check
+
+    /// While remote, checks every second that the phone agrees it has control.
+    private func startSync() {
+        syncTimer?.invalidate()
+        guard peerVersion >= 2 else { return }
+        lastPeerState = Date()
+        udpCheckpoint = udpSeq
+        syncTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            guard let self, self.remote else { return }
+            if Date().timeIntervalSince(self.lastPeerState) > 3 {
+                // No answer: the pipe is stale even if the socket looks open.
+                self.returnToMac(atFraction: nil)
+                self.connect()
+                return
+            }
+            self.send(["t": "sync"])
+        }
+    }
+
+    private func peerState(_ msg: [String: Any]) {
+        guard remote, msg["n"] as? Int == enterSeq else { return }
+        lastPeerState = Date()
+        // The phone doesn't hold the pointer (lost "enter", service
+        // restarted…): take it back rather than stay frozen at the edge.
+        if msg["active"] as? Bool == false {
+            returnToMac(atFraction: nil)
+            return
+        }
+        // Moves sent before the previous sync never reached the phone twice
+        // in a row: UDP doesn't get through (other network, firewall), so
+        // send moves over the pipe from now on.
+        if !udpConnections.isEmpty {
+            let received = (msg["udp"] as? NSNumber)?.int64Value ?? 0
+            udpMisses = udpCheckpoint > 0 && received < udpCheckpoint ? udpMisses + 1 : 0
+            if udpMisses >= 2 { closeUDP() }
+        }
+        udpCheckpoint = udpSeq
     }
 
     /// Disassociating the cursor doesn't always hold (other apps, display
@@ -280,6 +345,8 @@ final class InputShareController {
     private func returnToMac(atFraction y: CGFloat?) {
         guard remote else { return }
         remote = false
+        syncTimer?.invalidate()
+        syncTimer = nil
         if y == nil { send(["t": "leave"]) }
         var target = frozenAt
         if let y, let screen = edgeDisplay(at: frozenAt) {

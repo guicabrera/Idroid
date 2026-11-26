@@ -3,6 +3,7 @@ package relay
 import (
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +20,15 @@ import (
 // Mac reconnects on its own, which re-sends the request.
 const inputWaitTimeout = 30 * time.Second
 
+// A bridged pipe pings both sides; a side that stays silent (no frame, no
+// pong) for inputIdleTimeout is treated as gone and the pipe closes. Without
+// this, a phone that vanished without closing TCP keeps the Mac's pointer
+// parked on it, since the Mac only returns when the pipe drops.
+const (
+	inputPingInterval = 10 * time.Second
+	inputIdleTimeout  = 30 * time.Second
+)
+
 type inputWaiter struct {
 	conn   *websocket.Conn
 	paired chan *websocket.Conn
@@ -26,10 +36,28 @@ type inputWaiter struct {
 
 type inputPipes struct {
 	mu      sync.Mutex
-	waiting map[string]*inputWaiter // key "from>to"
+	waiting map[string]*inputWaiter    // key "from>to"
+	live    map[*websocket.Conn]string // bridged conn -> its device ID
 }
 
-var pipes = &inputPipes{waiting: make(map[string]*inputWaiter)}
+var pipes = &inputPipes{waiting: make(map[string]*inputWaiter), live: make(map[*websocket.Conn]string)}
+
+// closeInputPipes drops every pipe the device is on (e.g. it was removed).
+func closeInputPipes(deviceID string) {
+	pipes.mu.Lock()
+	defer pipes.mu.Unlock()
+	for conn, id := range pipes.live {
+		if id == deviceID {
+			conn.Close()
+		}
+	}
+	for key, w := range pipes.waiting {
+		if strings.HasPrefix(key, deviceID+">") || strings.HasSuffix(key, ">"+deviceID) {
+			w.conn.Close()
+			delete(pipes.waiting, key)
+		}
+	}
+}
 
 func (s *Server) handleInput(w http.ResponseWriter, r *http.Request) {
 	caller := deviceFromContext(r)
@@ -85,19 +113,50 @@ func (s *Server) handleInput(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	log.Printf("input pipe %s <-> %s open", caller.ID, peerID)
+	pipes.mu.Lock()
+	pipes.live[conn] = caller.ID
+	pipes.live[peer] = peerID
+	pipes.mu.Unlock()
 	bridge(conn, peer)
+	pipes.mu.Lock()
+	delete(pipes.live, conn)
+	delete(pipes.live, peer)
+	pipes.mu.Unlock()
 	log.Printf("input pipe %s <-> %s closed", caller.ID, peerID)
 }
 
-// bridge copies frames both ways until either side closes, then closes both.
+// bridge copies frames both ways until either side closes or goes silent,
+// then closes both.
 func bridge(a, b *websocket.Conn) {
 	done := make(chan struct{}, 2)
+	stop := make(chan struct{})
+	for _, c := range []*websocket.Conn{a, b} {
+		c.SetReadDeadline(time.Now().Add(inputIdleTimeout))
+		c.SetPongHandler(func(string) error { return c.SetReadDeadline(time.Now().Add(inputIdleTimeout)) })
+		go func() {
+			t := time.NewTicker(inputPingInterval)
+			defer t.Stop()
+			for {
+				select {
+				case <-stop:
+					return
+				case <-t.C:
+					// WriteControl is safe alongside the pump's writes.
+					if c.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second)) != nil {
+						c.Close()
+						return
+					}
+				}
+			}
+		}()
+	}
 	pump := func(src, dst *websocket.Conn) {
 		for {
 			kind, data, err := src.ReadMessage()
 			if err != nil {
 				break
 			}
+			src.SetReadDeadline(time.Now().Add(inputIdleTimeout))
 			if err := dst.WriteMessage(kind, data); err != nil {
 				break
 			}
@@ -107,6 +166,7 @@ func bridge(a, b *websocket.Conn) {
 	go pump(a, b)
 	go pump(b, a)
 	<-done
+	close(stop)
 	a.Close()
 	b.Close()
 	<-done

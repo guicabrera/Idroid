@@ -460,6 +460,7 @@ func (s *Server) handleDeviceRemove(w http.ResponseWriter, r *http.Request) {
 	for _, item := range s.items.ListForRecipient(id) {
 		_ = s.items.Delete(item.ID)
 	}
+	closeInputPipes(id)
 	s.notifyGroupChanged(caller.GroupID)
 	w.WriteHeader(http.StatusNoContent)
 }

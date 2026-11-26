@@ -278,6 +278,10 @@ final class AppState: ObservableObject {
             let response = try await apiClient.listDevices(pairing)
             me = response.me
             devices = response.devices
+            // The shared-input peer was removed: stop pointing at it.
+            if let id = inputShareDeviceID, !devices.contains(where: { $0.id == id }) {
+                inputShareDeviceID = nil
+            }
             probeControllable()
         } catch RelayError.http(401) {
             // This Mac was removed from another device: back to pairing.
