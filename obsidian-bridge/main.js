@@ -126,7 +126,7 @@ module.exports = class IdroidBridge extends Plugin {
         const msgs = ui ? ui.getMessages() : [];
         const last = msgs[msgs.length - 1];
         const lastLen = last ? (last.message || "").length + (last.parts || []).length : 0;
-        return [s.internalId, s.getStatus(), s.getLabel && s.getLabel(), msgs.length, lastLen, s.getPendingToolPermissions().length].join(":");
+        return [s.internalId, s.getStatus(), s.getLabel && s.getLabel(), msgs.length, lastLen, s.getPendingToolPermissions().length, questions(s).length].join(":");
       }).join("|") + "#" + (m.activeSessionId || "");
     } catch (_) {
       sig = "unavailable";
@@ -161,7 +161,11 @@ module.exports = class IdroidBridge extends Plugin {
     }
     if (req.method === "POST" && url.pathname === "/send") {
       const text = String(body.text || "").trim();
-      if (!text) return this.json(res, 400, { error: "empty message" });
+      // Screenshots from the phone: the same shape Copilot's own attach button sends.
+      const images = (Array.isArray(body.images) ? body.images : [])
+        .filter((i) => i && typeof i.data === "string" && /^image\//.test(String(i.mimeType)))
+        .map((i) => ({ type: "image", mimeType: i.mimeType, data: i.data }));
+      if (!text && !images.length) return this.json(res, 400, { error: "empty message" });
       let id = body.session;
       if (!id) {
         // A new chat from the phone; Copilot shows it on the Mac too. Existing
@@ -176,7 +180,7 @@ module.exports = class IdroidBridge extends Plugin {
       }
       const ui = m.getChatUIState(id);
       if (!ui) return this.json(res, 404, { error: "conversation not found" });
-      ui.sendMessage(text, { notes: [], urls: [], webTabs: [] });
+      ui.sendMessage(text, { notes: [], urls: [], webTabs: [] }, images.length ? images : undefined);
       this.watch();
       return this.json(res, 200, { session: id });
     }
@@ -184,6 +188,17 @@ module.exports = class IdroidBridge extends Plugin {
       const s = m.getSession(body.session);
       if (!s) return this.json(res, 404, { error: "conversation not found" });
       s.resolveToolPermission(body.toolCallId, body.optionId);
+      this.watch();
+      return this.json(res, 200, {});
+    }
+    if (req.method === "POST" && url.pathname === "/answer") {
+      // AskUserQuestion: answers keyed like Copilot's own card (answerKey ?? question;
+      // multi-select joined with ", "). {} = the user dismissed the questions.
+      const ui = m.getChatUIState(body.session);
+      if (!ui) return this.json(res, 404, { error: "conversation not found" });
+      const answers = {};
+      for (const [k, v] of Object.entries(body.answers || {})) if (typeof v === "string" && v.trim()) answers[k] = v.trim();
+      ui.resolveAskUserQuestion(body.requestId, answers);
       this.watch();
       return this.json(res, 200, {});
     }
@@ -377,6 +392,16 @@ module.exports = class IdroidBridge extends Plugin {
           detail: clip(JSON.stringify(p.toolCall.rawInput || p.toolCall.input || ""), MAX_TOOL_TEXT),
           options: (p.options || []).map((o) => ({ id: o.optionId, name: o.name, kind: o.kind })),
         })),
+        questions: questions(s).map((q) => ({
+          requestId: q.requestId,
+          questions: (q.questions || []).map((x) => ({
+            key: x.answerKey || x.question,
+            question: x.question || "",
+            header: x.header || "",
+            multiSelect: !!x.multiSelect,
+            options: (x.options || []).map((o) => ({ label: o.label || "", description: o.description || "" })),
+          })),
+        })),
       };
     }
     return { version: this.version, sessions, session, projects: this.projects(m), project: m.activeProjectId || GLOBAL };
@@ -396,6 +421,11 @@ module.exports = class IdroidBridge extends Plugin {
     res.end(JSON.stringify(obj));
   }
 };
+
+/** Pending AskUserQuestion requests (Copilot ≥ 4.0.18; [] on builds without them). */
+function questions(s) {
+  return (s.getPendingAskUserQuestions && s.getPendingAskUserQuestions()) || [];
+}
 
 function clip(s, n) {
   return s.length > n ? s.slice(0, n) + "…" : s;

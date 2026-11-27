@@ -72,7 +72,25 @@ data class CopilotChat(
     val status: String,
     val messages: List<CopilotMessage> = emptyList(),
     val permissions: List<CopilotPermission> = emptyList(),
+    val questions: List<CopilotQuestionRequest> = emptyList(),
 )
+
+/** Copilot's AskUserQuestion: one request can carry several questions, answered together. */
+@Serializable
+data class CopilotQuestionRequest(val requestId: String, val questions: List<CopilotQuestion> = emptyList())
+
+/** [key] is what the answer is keyed by; multi-select answers are joined with ", " (as on the Mac). */
+@Serializable
+data class CopilotQuestion(
+    val key: String,
+    val question: String,
+    val header: String = "",
+    val multiSelect: Boolean = false,
+    val options: List<CopilotQuestionOption> = emptyList(),
+)
+
+@Serializable
+data class CopilotQuestionOption(val label: String, val description: String = "")
 
 @Serializable
 data class CopilotMessage(val id: String, val sender: String, val text: String = "", val tools: List<CopilotTool> = emptyList(), val error: Boolean = false)
